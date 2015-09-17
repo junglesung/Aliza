@@ -1,0 +1,405 @@
+package main
+
+import (
+	"appengine"
+	"appengine/datastore"
+	"encoding/json"
+	"io/ioutil"
+	"log"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/pborman/uuid"
+	gcscontext   "golang.org/x/net/context"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	gcsappengine "google.golang.org/appengine"
+	gcsfile      "google.golang.org/appengine/file"
+	gcsurlfetch  "google.golang.org/appengine/urlfetch"
+	"google.golang.org/cloud"
+	"google.golang.org/cloud/storage"
+)
+
+type Item struct {
+	Id         string    `json:"id"`
+	People     int       `json:"people"`
+	Attendant  int       `json:"attendant"`
+	Image      string    `json:"image"`
+	CreateTime time.Time `json:"createtime"`
+}
+
+const BaseUrl = "/api/0.1/"
+const ItemKind = "Item"
+const ItemRoot = "Item Root"
+
+func init() {
+	http.HandleFunc(BaseUrl, rootPage)
+	http.HandleFunc(BaseUrl+"queryAll", queryAll)
+	http.HandleFunc(BaseUrl+"queryAllWithKey", queryAllWithKey)
+	http.HandleFunc(BaseUrl+"storeImage", storeImage)
+	http.HandleFunc(BaseUrl+"deleteAll", deleteAll)
+	http.HandleFunc(BaseUrl+"images", images)
+	http.HandleFunc(BaseUrl+"items", items)
+}
+
+func rootPage(rw http.ResponseWriter, req *http.Request) {
+	//
+}
+
+func images(rw http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	// case "GET":
+		// queryImage(rw, req)
+	case "POST":
+		storeImage(rw, req)
+	// case "DELETE":
+	// 	deleteImage(rw, req)
+	default:
+		// queryAllImage(rw, req)
+	}
+}
+
+func items(rw http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case "GET":
+		queryItem(rw, req)
+	case "POST":
+		storeItem(rw, req)
+	case "DELETE":
+		deleteItem(rw, req)
+	default:
+		queryAll(rw, req)
+	}
+}
+
+func storeImage(rw http.ResponseWriter, req *http.Request) {
+	// Appengine
+	var c appengine.Context
+	// Google Cloud Storage authentication
+	var cc gcscontext.Context
+	// Google Cloud Storage bucket name
+	var bucket string = ""
+	// User uploaded image file name
+	var fileName string = uuid.New()
+	// User uploaded image file type
+	var contentType string = ""
+	// User uploaded image file raw data
+	var b []byte
+	// Result, 0: success, 1: failed
+	var r int = 0
+
+	// Set response in the end
+	defer func() {
+		// Return status. WriteHeader() must be called before call to Write
+		if r == 0 {
+			// Changing the header after a call to WriteHeader (or Write) has no effect.
+			// rw.Header().Set("Location", req.URL.String()+"/"+cKey.Encode())
+			rw.Header().Set("Location", "http://"+bucket+".storage.googleapis.com/"+fileName)
+			rw.WriteHeader(http.StatusCreated)
+		} else {
+			http.Error(rw, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		}
+	}()
+
+	// To log information in Google APP Engine console
+	c = appengine.NewContext(req)
+
+	// Get data from body
+	b, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		c.Errorf("%s in reading body", err)
+		r = 1
+		return
+	}
+	c.Infof("Body length %d bytes, read %d bytes", req.ContentLength, len(b))
+
+	// Determine filename extension from content type
+	contentType = req.Header["Content-Type"][0]
+	switch contentType {
+	case "image/jpeg":
+		fileName += ".jpg"
+	default:
+		c.Errorf("Unknown or unsupported content type '%s'. Valid: image/jpeg", contentType)
+		r = 1
+		return
+	}
+	c.Infof("Content type %s is received, %s is detected.", contentType, http.DetectContentType(b))
+
+	// Get default bucket name
+	cc = gcsappengine.NewContext(req)
+	if bucket, err = gcsfile.DefaultBucketName(cc); err != nil {
+		c.Errorf("%s in getting default GCS bucket name", err)
+		r = 1
+		return
+	}
+	c.Infof("APP Engine Version: %s", gcsappengine.VersionID(cc))
+	c.Infof("Using bucket name: %s", bucket)
+
+	// Prepare Google Cloud Storage authentication
+	hc := &http.Client{
+		Transport: &oauth2.Transport{
+			Source: google.AppEngineTokenSource(cc, storage.ScopeFullControl),
+			// Note that the App Engine urlfetch service has a limit of 10MB uploads and
+			// 32MB downloads.
+			// See https://cloud.google.com/appengine/docs/go/urlfetch/#Go_Quotas_and_limits
+			// for more information.
+			Base: &gcsurlfetch.Transport{Context: cc},
+		},
+	}
+	ctx := cloud.NewContext(gcsappengine.AppID(cc), hc)
+
+	// Change default object ACLs
+	err = storage.PutDefaultACLRule(ctx, bucket, "allUsers", storage.RoleReader)
+	// err = storage.PutACLRule(ctx, bucket, fileName, "allUsers", storage.RoleReader)
+	if err != nil {
+		c.Errorf("%v in saving ACL rule for bucket %q", err, bucket)
+		return
+	}
+
+	// Store file in Google Cloud Storage
+	wc := storage.NewWriter(ctx, bucket, fileName)
+	wc.ContentType = contentType
+	// wc.Metadata = map[string]string{
+	// 	"x-goog-meta-foo": "foo",
+	// 	"x-goog-meta-bar": "bar",
+	// }
+	if _, err := wc.Write(b); err != nil {
+		c.Errorf("CreateFile: unable to write data to bucket %q, file %q: %v", bucket, fileName, err)
+		r = 1
+		return
+	}
+	if err := wc.Close(); err != nil {
+		c.Errorf("CreateFile: unable to close bucket %q, file %q: %v", bucket, fileName, err)
+		r = 1
+		return
+	}
+	c.Infof("/%v/%v\n created", bucket, fileName)
+}
+
+func storeItem(rw http.ResponseWriter, req *http.Request) {
+	// Result, 0: success, 1: failed
+	var r int = 0
+	var cKey *datastore.Key = nil
+	defer func() {
+		// Return status. WriteHeader() must be called before call to Write
+		if r == 0 {
+			// Changing the header after a call to WriteHeader (or Write) has no effect.
+			rw.Header().Set("Location", req.URL.String()+"/"+cKey.Encode())
+			rw.WriteHeader(http.StatusCreated)
+		} else {
+			http.Error(rw, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		}
+	}()
+
+	// Get data from body
+	b, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		log.Println(err, "in reading body")
+		r = 1
+		return
+	}
+	var item Item
+	if err = json.Unmarshal(b, &item); err != nil {
+		log.Println(err, "in decoding body")
+		r = 1
+		return
+	}
+
+	// Store item into datastore
+	c := appengine.NewContext(req)
+	pKey := datastore.NewKey(c, ItemKind, ItemRoot, 0, nil)
+	cKey, err = datastore.Put(c, datastore.NewIncompleteKey(c, ItemKind, pKey), &item)
+	if err != nil {
+		log.Println(err)
+		r = 1
+		return
+	}
+}
+
+func queryAll(rw http.ResponseWriter, req *http.Request) {
+	// Get all entities
+	var dst []Item
+	r := 0
+	c := appengine.NewContext(req)
+	_, err := datastore.NewQuery(ItemKind).Order("-CreateTime").GetAll(c, &dst)
+	if err != nil {
+		log.Println(err)
+		r = 1
+	}
+
+	// Return status. WriteHeader() must be called before call to Write
+	if r == 0 {
+		rw.WriteHeader(http.StatusOK)
+	} else {
+		http.Error(rw, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
+
+	// Return body
+	encoder := json.NewEncoder(rw)
+	if err = encoder.Encode(dst); err != nil {
+		log.Println(err, "in encoding result", dst)
+	} else {
+		log.Printf("QueryAll() returns %d items\n", len(dst))
+	}
+}
+
+func queryItem(rw http.ResponseWriter, req *http.Request) {
+	if len(req.URL.Query()) == 0 {
+		queryAllWithKey(rw, req)
+	} else {
+		searchItem(rw, req)
+	}
+}
+
+func queryAllWithKey(rw http.ResponseWriter, req *http.Request) {
+	// Get all entities
+	var dst []Item
+	r := 0
+	c := appengine.NewContext(req)
+	k, err := datastore.NewQuery(ItemKind).Order("-CreateTime").GetAll(c, &dst)
+	if err != nil {
+		log.Println(err)
+		r = 1
+	}
+
+	// Map keys and items
+	var m map[string]*Item
+	m = make(map[string]*Item)
+	for i := range k {
+		m[k[i].Encode()] = &dst[i]
+	}
+
+	// Return status. WriteHeader() must be called before call to Write
+	if r == 0 {
+		rw.WriteHeader(http.StatusOK)
+	} else {
+		http.Error(rw, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
+
+	// Return body
+	encoder := json.NewEncoder(rw)
+	if err = encoder.Encode(m); err != nil {
+		log.Println(err, "in encoding result", m)
+	} else {
+		log.Printf("QueryAll() returns %d items\n", len(m))
+	}
+}
+
+func searchItem(rw http.ResponseWriter, req *http.Request) {
+	// Get all entities
+	var dst []Item
+	r := 0
+	q := req.URL.Query()
+	f := datastore.NewQuery(ItemKind)
+	for key := range q {
+		f = f.Filter(key+"=", q.Get(key))
+	}
+	c := appengine.NewContext(req)
+	k, err := f.GetAll(c, &dst)
+	if err != nil {
+		log.Println(err)
+		r = 1
+	}
+
+	// Map keys and items
+	var m map[string]*Item
+	m = make(map[string]*Item)
+	for i := range k {
+		m[k[i].Encode()] = &dst[i]
+	}
+
+	// Return status. WriteHeader() must be called before call to Write
+	if r == 0 {
+		rw.WriteHeader(http.StatusOK)
+	} else {
+		http.Error(rw, http.StatusText(http.StatusNotFound), http.StatusNotFound)
+		return
+	}
+
+	// Return body
+	encoder := json.NewEncoder(rw)
+	if err = encoder.Encode(m); err != nil {
+		log.Println(err, "in encoding result", m)
+	} else {
+		log.Printf("SearchItem() returns %d items\n", len(m))
+	}
+}
+
+func deleteItem(rw http.ResponseWriter, req *http.Request) {
+	// Get key from URL
+	tokens := strings.Split(req.URL.Path, "/")
+	var keyIndexInTokens int = 0
+	for i, v := range tokens {
+		if v == "items" {
+			keyIndexInTokens = i + 1
+		}
+	}
+	if keyIndexInTokens >= len(tokens) {
+		log.Println("Key is not given so that delete all items")
+		deleteAll(rw, req)
+		return
+	}
+	keyString := tokens[keyIndexInTokens]
+	if keyString == "" {
+		log.Println("Key is empty so that delete all items")
+		deleteAll(rw, req)
+	} else {
+		deleteOneItem(rw, req, keyString)
+	}
+}
+
+func deleteAll(rw http.ResponseWriter, req *http.Request) {
+	// Delete root entity after other entities
+	r := 0
+	c := appengine.NewContext(req)
+	pKey := datastore.NewKey(c, ItemKind, ItemRoot, 0, nil)
+	if keys, err := datastore.NewQuery(ItemKind).KeysOnly().GetAll(c, nil); err != nil {
+		log.Println(err)
+		r = 1
+	} else if err := datastore.DeleteMulti(c, keys); err != nil {
+		log.Println(err)
+		r = 1
+	} else if err := datastore.Delete(c, pKey); err != nil {
+		log.Println(err)
+		r = 1
+	}
+
+	// Return status. WriteHeader() must be called before call to Write
+	if r == 0 {
+		rw.WriteHeader(http.StatusOK)
+	} else {
+		http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+	}
+}
+
+func deleteOneItem(rw http.ResponseWriter, req *http.Request, keyString string) {
+	// Result
+	r := http.StatusNoContent
+	defer func() {
+		// Return status. WriteHeader() must be called before call to Write
+		if r == http.StatusNoContent {
+			rw.WriteHeader(http.StatusNoContent)
+		} else {
+			http.Error(rw, http.StatusText(r), r)
+		}
+	}()
+
+	key, err := datastore.DecodeKey(keyString)
+	if err != nil {
+		log.Println(err, "in decoding key string")
+		r = http.StatusBadRequest
+		return
+	}
+
+	// Delete the entity
+	c := appengine.NewContext(req)
+	if err := datastore.Delete(c, key); err != nil {
+		log.Println(err, "in deleting entity by key")
+		r = http.StatusNotFound
+		return
+	}
+	log.Println(key, "is deleted")
+}
