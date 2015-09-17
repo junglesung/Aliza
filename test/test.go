@@ -13,7 +13,6 @@ import (
 )
 
 type Item struct {
-	Id         string    `json:"id"`
 	People     int       `json:"people"`
 	Attendant  int       `json:"attendant"`
 	Image      string    `json:"image"`
@@ -30,7 +29,6 @@ const ItemMaxPeople = 5
 // Pring an Item
 func (b Item) String() string {
 	s := ""
-	s += fmt.Sprintln("Id:", b.Id)
 	s += fmt.Sprintln("People:", b.People)
 	s += fmt.Sprintln("Attendant:", b.Attendant)
 	s += fmt.Sprintln("Image:", b.Image)
@@ -138,7 +136,6 @@ func storeItem(imgUrl string) (r int, key string) {
 
 	// Make body
 	item := Item{
-		Id:         "",
 		People:     rand.Intn(rand.Intn(ItemMaxPeople - ItemMinPeople) + ItemMinPeople),
 		Attendant:  1,
 		Image:      imgUrl,

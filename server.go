@@ -22,7 +22,6 @@ import (
 )
 
 type Item struct {
-	Id         string    `json:"id"`
 	People     int       `json:"people"`
 	Attendant  int       `json:"attendant"`
 	Image      string    `json:"image"`
@@ -267,8 +266,8 @@ func queryAllWithKey(rw http.ResponseWriter, req *http.Request) {
 	// Map keys and items
 	var m map[string]*Item
 	m = make(map[string]*Item)
-	for i := range k {
-		m[k[i].Encode()] = &dst[i]
+	for i, v := range k {
+		m[v.Encode()] = &dst[i]
 	}
 
 	// Return status. WriteHeader() must be called before call to Write
