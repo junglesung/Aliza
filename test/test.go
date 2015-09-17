@@ -237,7 +237,7 @@ func deleteAll() int {
 // Return
 // int = 0: success
 //       1: failed
-// string is the new item's unique key
+// TODO: return the new item's unique key as a string
 func storeImage() (r int) {
 	// Return value
 	r = 0
@@ -302,6 +302,7 @@ func storeImage() (r int) {
 	return
 }
 
+// TODO: design a test plan
 func main() {
 	storeImage()
 	// // Random seed
