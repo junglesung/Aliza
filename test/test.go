@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -84,8 +85,10 @@ func queryItem() {
 		return
 	}
 	var q url.Values = u.Query()
-	q.Add("People", rand.Intn(ItemMaxPeople - ItemMinPeople) + ItemMinPeople)
+	var people int = rand.Intn(ItemMaxPeople - ItemMinPeople) + ItemMinPeople
+	q.Add("People", strconv.Itoa(people))
 	u.RawQuery = q.Encode()
+	fmt.Println("Query people = ", people)
 
 	// Send request
 	resp, err := http.Get(u.String())
@@ -136,7 +139,7 @@ func storeItem(imgUrl string) (r int, key string) {
 
 	// Make body
 	item := Item{
-		People:     rand.Intn(rand.Intn(ItemMaxPeople - ItemMinPeople) + ItemMinPeople),
+		People:     (rand.Intn(ItemMaxPeople - ItemMinPeople) + ItemMinPeople),
 		Attendant:  1,
 		Image:      imgUrl,
 		CreateTime: time.Now(),
@@ -235,18 +238,16 @@ func deleteAll() int {
 }
 
 // Return
-// int = 0: success
-//       1: failed
-// TODO: return the new item's unique key as a string
-func storeImage() (r int) {
+// url = "http://xxx": success
+//       "": failed
+func storeImage() (urlstring string) {
 	// Return value
-	r = 0
+	urlstring = ""
 
 	// Read file
 	b, err := ioutil.ReadFile("Hydrangeas.jpg")
 	if err != nil {
 		fmt.Println(err, "in reading file")
-		r = 1
 		return
 	}
 
@@ -257,7 +258,6 @@ func storeImage() (r int) {
 	resp, err := http.Post(ItemURL+"storeImage", "image/jpeg", bytes.NewReader(b))
 	if err != nil {
 		fmt.Println(err)
-		r = 1
 		return
 	}
 	defer resp.Body.Close()
@@ -267,12 +267,9 @@ func storeImage() (r int) {
 		b, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
 			fmt.Println(err, "in reading body")
-			r = 1
 			return
 		}
 		fmt.Printf("%s\n", b)
-
-		r = 1
 		return
 	}
 	url, err := resp.Location()
@@ -280,66 +277,71 @@ func storeImage() (r int) {
 		fmt.Println(err, "in getting location from response")
 		return
 	}
-	fmt.Println("Location is", url)
+	urlstring = url.String()
+	fmt.Println("Location is", urlstring)
 
-	// Get key from URL
-	// tokens := strings.Split(url.Path, "/")
-	// var keyIndexInTokens int = 0
-	// for i, v := range tokens {
-	// 	if v == "items" {
-	// 		keyIndexInTokens = i + 1
-	// 	}
-	// }
-	// if keyIndexInTokens >= len(tokens) {
-	// 	fmt.Println("Key is not given")
-	// 	return
-	// }
-	// key = tokens[keyIndexInTokens]
-	// if key == "" {
-	// 	fmt.Println("Key is empty")
-	// 	return
-	// }
 	return
 }
 
 // TODO: design a test plan
 func main() {
-	storeImage()
-	// // Random seed
-	// rand.Seed(time.Now().Unix())
+	var num int = 5
+	var r int
+	var key string
 
-	// // Test suite
-	// fmt.Println("========================================")
-	// if storeTen() != 0 {
-	// 	fmt.Println("Store items failed")
-	// 	return
-	// } else {
-	// 	fmt.Println("Store 10 items")
-	// }
-	// fmt.Println("========================================")
-	// r, key := storeItem()
-	// if r != 0 {
-	// 	fmt.Println("Store a item failed")
-	// 	return
-	// } else {
-	// 	fmt.Println("Store a item in key", key)
-	// }
-	// fmt.Println("========================================")
-	// queryAll()
-	// fmt.Println("========================================")
-	// queryItem()
-	// fmt.Println("========================================")
-	// if deleteItem(key) != 0 {
-	// 	fmt.Println("Failed to delete item key", key)
-	// 	return
-	// } else {
-	// 	fmt.Println("Delete item key", key)
-	// }
-	// fmt.Println("========================================")
-	// if deleteAll() != 0 {
-	// 	fmt.Println("Delete failed")
-	// 	return
-	// } else {
-	// 	fmt.Println("Delete all")
-	// }
+	// Random seed
+	rand.Seed(time.Now().Unix())
+
+	// Test suite
+	fmt.Println("========================================")
+	fmt.Println("Store an image")
+	fmt.Println("========================================")
+	imageUrlString := storeImage()
+	if imageUrlString == "" {
+		fmt.Println("Store an image failed")
+		return
+	} else {
+		fmt.Println("Store an image " + imageUrlString)
+	}
+
+	fmt.Println("========================================")
+	fmt.Printf("Store %d items of the image\n", num)
+	fmt.Println("========================================")
+	for i := 1; i <= num; i++ {
+		r, key = storeItem(imageUrlString)
+		if r != 0 {
+			fmt.Printf("Store item %d failed\n", i)
+			return
+		} else {
+			fmt.Printf("Store item %d in key %s\n", i, key)
+		}
+	}
+	fmt.Println("========================================")
+	fmt.Println("Query all items")
+	fmt.Println("========================================")
+	queryAll()
+
+	fmt.Println("========================================")
+	fmt.Println("Query the item")
+	fmt.Println("========================================")
+	queryItem()
+
+	fmt.Println("========================================")
+	fmt.Println("Delete the last item")
+	fmt.Println("========================================")
+	if deleteItem(key) != 0 {
+		fmt.Println("Failed to delete item key", key)
+		return
+	} else {
+		fmt.Println("Delete item key", key)
+	}
+	fmt.Println("========================================")
+	fmt.Println("Delete all items")
+	fmt.Println("========================================")
+	if deleteAll() != 0 {
+		fmt.Println("Delete failed")
+		return
+	} else {
+		fmt.Println("Delete all")
+	}
 }
