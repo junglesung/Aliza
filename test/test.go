@@ -88,7 +88,6 @@ func queryItem() {
 	var people int = rand.Intn(ItemMaxPeople - ItemMinPeople) + ItemMinPeople
 	q.Add("People", strconv.Itoa(people))
 	u.RawQuery = q.Encode()
-	fmt.Println("Query people = ", people)
 
 	// Send request
 	resp, err := http.Get(u.String())
@@ -326,22 +325,22 @@ func main() {
 	fmt.Println("========================================")
 	queryItem()
 
-	fmt.Println("========================================")
-	fmt.Println("Delete the last item")
-	fmt.Println("========================================")
-	if deleteItem(key) != 0 {
-		fmt.Println("Failed to delete item key", key)
-		return
-	} else {
-		fmt.Println("Delete item key", key)
-	}
-	fmt.Println("========================================")
-	fmt.Println("Delete all items")
-	fmt.Println("========================================")
-	if deleteAll() != 0 {
-		fmt.Println("Delete failed")
-		return
-	} else {
-		fmt.Println("Delete all")
-	}
+	// fmt.Println("========================================")
+	// fmt.Println("Delete the last item")
+	// fmt.Println("========================================")
+	// if deleteItem(key) != 0 {
+	// 	fmt.Println("Failed to delete item key", key)
+	// 	return
+	// } else {
+	// 	fmt.Println("Delete item key", key)
+	// }
+	// fmt.Println("========================================")
+	// fmt.Println("Delete all items")
+	// fmt.Println("========================================")
+	// if deleteAll() != 0 {
+	// 	fmt.Println("Delete failed")
+	// 	return
+	// } else {
+	// 	fmt.Println("Delete all")
+	// }
 }

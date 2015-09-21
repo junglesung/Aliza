@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -177,6 +178,8 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 }
 
 func storeItem(rw http.ResponseWriter, req *http.Request) {
+	// Appengine
+	var c appengine.Context = appengine.NewContext(req)
 	// Result, 0: success, 1: failed
 	var r int = 0
 	var cKey *datastore.Key = nil
@@ -206,7 +209,6 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Store item into datastore
-	c := appengine.NewContext(req)
 	pKey := datastore.NewKey(c, ItemKind, ItemRoot, 0, nil)
 	cKey, err = datastore.Put(c, datastore.NewIncompleteKey(c, ItemKind, pKey), &item)
 	if err != nil {
@@ -288,18 +290,52 @@ func queryAllWithKey(rw http.ResponseWriter, req *http.Request) {
 }
 
 func searchItem(rw http.ResponseWriter, req *http.Request) {
+	// Appengine
+	var c appengine.Context = appengine.NewContext(req)
 	// Get all entities
 	var dst []Item
+	// Error flag
 	r := 0
+	// Query
 	q := req.URL.Query()
 	f := datastore.NewQuery(ItemKind)
 	for key := range q {
-		f = f.Filter(key+"=", q.Get(key))
+		switch key {
+		case "People":  // int
+			v, err := strconv.Atoi(q.Get(key))
+			if err != nil {
+				c.Errorf("%s in converting %s number\n", err, key)
+			} else {
+				f = f.Filter(key+"=", v)
+			}
+		case "Attendant":  // int
+			v, err := strconv.Atoi(q.Get(key))
+			if err != nil {
+				c.Errorf("%s in converting %s number\n", err, key)
+			} else {
+				f = f.Filter(key+"=", v)
+			}
+		case "Image":  // string
+			var v string = q.Get(key)
+			f = f.Filter(key+"=", v)
+		case "CreateTime":  // time.Time
+			// TODO: define the format of time so that time.Parse() can correctly parse
+			var tmp string = q.Get(key)
+			v, err := time.Parse(tmp, tmp)
+			if err != nil {
+				c.Errorf("%s in converting %s number\n", err, key)
+			} else {
+				f = f.Filter(key+"=", v)
+			}
+			// Vernon debug
+			c.Debugf("%s, %s\n", key, v)
+		default:
+			c.Infof("%s is a wrong query property\n", key)
+		}
 	}
-	c := appengine.NewContext(req)
 	k, err := f.GetAll(c, &dst)
 	if err != nil {
-		log.Println(err)
+		c.Errorf("%s in getting data from datastore\n", err)
 		r = 1
 	}
 
