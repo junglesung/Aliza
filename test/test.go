@@ -14,6 +14,7 @@ import (
 )
 
 type Item struct {
+	Id         string    `json:"id"          datastore:"-"`
 	People     int       `json:"people"`
 	Attendant  int       `json:"attendant"`
 	Image      string    `json:"image"`
@@ -57,16 +58,16 @@ func queryAll() {
 	}
 
 	// Decode body
-	var items map[string]Item = make(map[string]Item)
+	var items []Item
+	// var items map[string]Item = make(map[string]Item)
 	if resp.StatusCode == http.StatusOK {
 		// Decode as JSON
 		if err := json.Unmarshal(body, &items); err != nil {
 			fmt.Println(err, "in decoding JSON")
 			return
 		}
-		for i, v := range items {
+		for _, v := range items {
 			fmt.Println("-------------------------------")
-			fmt.Println("Key:", i)
 			fmt.Println(v)
 		}
 		fmt.Println("Total", len(items), "items")
@@ -88,6 +89,7 @@ func queryItem() {
 	var people int = rand.Intn(ItemMaxPeople - ItemMinPeople) + ItemMinPeople
 	q.Add("People", strconv.Itoa(people))
 	u.RawQuery = q.Encode()
+	fmt.Println("Query people =", people)
 
 	// Send request
 	resp, err := http.Get(u.String())
@@ -108,16 +110,16 @@ func queryItem() {
 	}
 
 	// Decode body
-	var items map[string]Item = make(map[string]Item)
+	var items []Item
+	// var items map[string]Item = make(map[string]Item)
 	if resp.StatusCode == http.StatusOK {
 		// Decode as JSON
 		if err := json.Unmarshal(body, &items); err != nil {
 			fmt.Println(err, "in decoding JSON")
 			return
 		}
-		for i, v := range items {
+		for _, v := range items {
 			fmt.Println("-------------------------------")
-			fmt.Println("Key:", i)
 			fmt.Println(v)
 		}
 		fmt.Println("Total", len(items), "items")
@@ -138,6 +140,7 @@ func storeItem(imgUrl string) (r int, key string) {
 
 	// Make body
 	item := Item{
+		Id:         "",
 		People:     (rand.Intn(ItemMaxPeople - ItemMinPeople) + ItemMinPeople),
 		Attendant:  1,
 		Image:      imgUrl,
@@ -325,22 +328,22 @@ func main() {
 	fmt.Println("========================================")
 	queryItem()
 
-	// fmt.Println("========================================")
-	// fmt.Println("Delete the last item")
-	// fmt.Println("========================================")
-	// if deleteItem(key) != 0 {
-	// 	fmt.Println("Failed to delete item key", key)
-	// 	return
-	// } else {
-	// 	fmt.Println("Delete item key", key)
-	// }
-	// fmt.Println("========================================")
-	// fmt.Println("Delete all items")
-	// fmt.Println("========================================")
-	// if deleteAll() != 0 {
-	// 	fmt.Println("Delete failed")
-	// 	return
-	// } else {
-	// 	fmt.Println("Delete all")
-	// }
+	fmt.Println("========================================")
+	fmt.Println("Delete the last item")
+	fmt.Println("========================================")
+	if deleteItem(key) != 0 {
+		fmt.Println("Failed to delete item key", key)
+		return
+	} else {
+		fmt.Println("Delete item key", key)
+	}
+	fmt.Println("========================================")
+	fmt.Println("Delete all items")
+	fmt.Println("========================================")
+	if deleteAll() != 0 {
+		fmt.Println("Delete failed")
+		return
+	} else {
+		fmt.Println("Delete all")
+	}
 }

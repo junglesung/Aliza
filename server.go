@@ -23,6 +23,7 @@ import (
 )
 
 type Item struct {
+	Id         string    `json:"id"          datastore:"-"`
 	People     int       `json:"people"`
 	Attendant  int       `json:"attendant"`
 	Image      string    `json:"image"`
@@ -36,7 +37,6 @@ const ItemRoot = "Item Root"
 func init() {
 	http.HandleFunc(BaseUrl, rootPage)
 	http.HandleFunc(BaseUrl+"queryAll", queryAll)
-	http.HandleFunc(BaseUrl+"queryAllWithKey", queryAllWithKey)
 	http.HandleFunc(BaseUrl+"storeImage", storeImage)
 	http.HandleFunc(BaseUrl+"deleteAll", deleteAll)
 	http.HandleFunc(BaseUrl+"images", images)
@@ -197,24 +197,39 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 	// Get data from body
 	b, err := ioutil.ReadAll(req.Body)
 	if err != nil {
-		log.Println(err, "in reading body")
+		c.Errorf("%s in reading body %s", err, b)
 		r = 1
 		return
 	}
 	var item Item
 	if err = json.Unmarshal(b, &item); err != nil {
-		log.Println(err, "in decoding body")
+		c.Errorf("%s in decoding body %s", err, b)
 		r = 1
 		return
 	}
+
+	// Set now as the creation time
+	item.CreateTime = time.Now()
+
+	// Vernon debug
+	c.Debugf("Store item %s", b)
 
 	// Store item into datastore
 	pKey := datastore.NewKey(c, ItemKind, ItemRoot, 0, nil)
 	cKey, err = datastore.Put(c, datastore.NewIncompleteKey(c, ItemKind, pKey), &item)
 	if err != nil {
+		c.Errorf("%s in storing in datastore", err)
 		log.Println(err)
 		r = 1
 		return
+	}
+}
+
+func queryItem(rw http.ResponseWriter, req *http.Request) {
+	if len(req.URL.Query()) == 0 {
+		queryAll(rw, req)
+	} else {
+		searchItem(rw, req)
 	}
 }
 
@@ -223,10 +238,15 @@ func queryAll(rw http.ResponseWriter, req *http.Request) {
 	var dst []Item
 	r := 0
 	c := appengine.NewContext(req)
-	_, err := datastore.NewQuery(ItemKind).Order("-CreateTime").GetAll(c, &dst)
+	k, err := datastore.NewQuery(ItemKind).Order("-CreateTime").GetAll(c, &dst)
 	if err != nil {
 		log.Println(err)
 		r = 1
+	}
+
+	// Map keys and items
+	for i, v := range k {
+		dst[i].Id = v.Encode()
 	}
 
 	// Return status. WriteHeader() must be called before call to Write
@@ -243,49 +263,6 @@ func queryAll(rw http.ResponseWriter, req *http.Request) {
 		log.Println(err, "in encoding result", dst)
 	} else {
 		log.Printf("QueryAll() returns %d items\n", len(dst))
-	}
-}
-
-func queryItem(rw http.ResponseWriter, req *http.Request) {
-	if len(req.URL.Query()) == 0 {
-		queryAllWithKey(rw, req)
-	} else {
-		searchItem(rw, req)
-	}
-}
-
-func queryAllWithKey(rw http.ResponseWriter, req *http.Request) {
-	// Get all entities
-	var dst []Item
-	r := 0
-	c := appengine.NewContext(req)
-	k, err := datastore.NewQuery(ItemKind).Order("-CreateTime").GetAll(c, &dst)
-	if err != nil {
-		log.Println(err)
-		r = 1
-	}
-
-	// Map keys and items
-	var m map[string]*Item
-	m = make(map[string]*Item)
-	for i, v := range k {
-		m[v.Encode()] = &dst[i]
-	}
-
-	// Return status. WriteHeader() must be called before call to Write
-	if r == 0 {
-		rw.WriteHeader(http.StatusOK)
-	} else {
-		http.Error(rw, http.StatusText(http.StatusNotFound), http.StatusNotFound)
-		return
-	}
-
-	// Return body
-	encoder := json.NewEncoder(rw)
-	if err = encoder.Encode(m); err != nil {
-		log.Println(err, "in encoding result", m)
-	} else {
-		log.Printf("QueryAll() returns %d items\n", len(m))
 	}
 }
 
@@ -340,10 +317,8 @@ func searchItem(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Map keys and items
-	var m map[string]*Item
-	m = make(map[string]*Item)
-	for i := range k {
-		m[k[i].Encode()] = &dst[i]
+	for i, v := range k {
+		dst[i].Id = v.Encode()
 	}
 
 	// Return status. WriteHeader() must be called before call to Write
@@ -356,10 +331,10 @@ func searchItem(rw http.ResponseWriter, req *http.Request) {
 
 	// Return body
 	encoder := json.NewEncoder(rw)
-	if err = encoder.Encode(m); err != nil {
-		log.Println(err, "in encoding result", m)
+	if err = encoder.Encode(dst); err != nil {
+		log.Println(err, "in encoding result", dst)
 	} else {
-		log.Printf("SearchItem() returns %d items\n", len(m))
+		log.Printf("SearchItem() returns %d items\n", len(dst))
 	}
 }
 
