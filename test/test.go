@@ -77,7 +77,7 @@ func queryAll() {
 	}
 }
 
-func queryItem() {
+func searchItem() {
 	// Make URL
 	var u *url.URL
 	var err error
@@ -195,6 +195,51 @@ func storeItem(imgUrl string) (r int, key string) {
 
 // Return 0: success
 // Return 1: failed
+func queryItem(key string) int {
+	// Vernon
+	fmt.Println(ItemURL+"items/"+key)
+
+	// Send request
+	resp, err := http.Get(ItemURL+"items/"+key)
+	if err != nil {
+		fmt.Println(err)
+		return 1
+	}
+
+	// Print status
+	fmt.Println(resp.Status, resp.StatusCode)
+
+	// Get body
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Println(err)
+		return 1
+	}
+
+	// Decode body
+	var item Item
+	// var items map[string]Item = make(map[string]Item)
+	if resp.StatusCode == http.StatusOK {
+		// Decode as JSON
+		if err := json.Unmarshal(body, &item); err != nil {
+			fmt.Println(err, "in decoding JSON", body)
+			return 1
+		}
+		fmt.Println(item)
+		// Vernon debug
+		fmt.Printf("%s\n", body)
+	} else {
+		// Decode as text
+		fmt.Printf("%s\n", body)
+		return 1
+	}
+
+	return 0
+}
+
+// Return 0: success
+// Return 1: failed
 func deleteItem(key string) int {
 	// Send request
 	pReq, err := http.NewRequest("DELETE", ItemURL+"items/"+key, nil)
@@ -285,65 +330,79 @@ func storeImage() (urlstring string) {
 	return
 }
 
-// TODO: design a test plan
 func main() {
-	var num int = 5
-	var r int
-	var key string
-
-	// Random seed
-	rand.Seed(time.Now().Unix())
-
-	// Test suite
-	fmt.Println("========================================")
-	fmt.Println("Store an image")
-	fmt.Println("========================================")
-	imageUrlString := storeImage()
-	if imageUrlString == "" {
-		fmt.Println("Store an image failed")
-		return
-	} else {
-		fmt.Println("Store an image " + imageUrlString)
-	}
-
-	fmt.Println("========================================")
-	fmt.Printf("Store %d items of the image\n", num)
-	fmt.Println("========================================")
-	for i := 1; i <= num; i++ {
-		r, key = storeItem(imageUrlString)
-		if r != 0 {
-			fmt.Printf("Store item %d failed\n", i)
-			return
-		} else {
-			fmt.Printf("Store item %d in key %s\n", i, key)
-		}
-	}
-	fmt.Println("========================================")
-	fmt.Println("Query all items")
-	fmt.Println("========================================")
-	queryAll()
-
-	fmt.Println("========================================")
-	fmt.Println("Query the item")
-	fmt.Println("========================================")
-	queryItem()
-
-	fmt.Println("========================================")
-	fmt.Println("Delete the last item")
-	fmt.Println("========================================")
-	if deleteItem(key) != 0 {
-		fmt.Println("Failed to delete item key", key)
-		return
-	} else {
-		fmt.Println("Delete item key", key)
-	}
-	fmt.Println("========================================")
-	fmt.Println("Delete all items")
-	fmt.Println("========================================")
-	if deleteAll() != 0 {
-		fmt.Println("Delete failed")
-		return
-	} else {
-		fmt.Println("Delete all")
-	}
+	key := "ag9zfnRlc3RnY3NzZXJ2ZXJyJAsSBEl0ZW0iCUl0ZW0gUm9vdAwLEgRJdGVtGICAgICQ3Z4KDA"
+	queryItem(key);
 }
+
+// func main() {
+// 	var num int = 5
+// 	var r int
+// 	var key string
+
+// 	// Random seed
+// 	rand.Seed(time.Now().Unix())
+
+// 	// Test suite
+// 	fmt.Println("========================================")
+// 	fmt.Println("Store an image")
+// 	fmt.Println("========================================")
+// 	imageUrlString := storeImage()
+// 	if imageUrlString == "" {
+// 		fmt.Println("Store an image failed")
+// 		return
+// 	} else {
+// 		fmt.Println("Store an image " + imageUrlString)
+// 	}
+
+// 	fmt.Println("========================================")
+// 	fmt.Printf("Store %d items of the image\n", num)
+// 	fmt.Println("========================================")
+// 	for i := 1; i <= num; i++ {
+// 		r, key = storeItem(imageUrlString)
+// 		if r != 0 {
+// 			fmt.Printf("Store item %d failed\n", i)
+// 			return
+// 		} else {
+// 			fmt.Printf("Store item %d in key %s\n", i, key)
+// 		}
+// 	}
+// 	fmt.Println("========================================")
+// 	fmt.Println("Query all items")
+// 	fmt.Println("========================================")
+// 	queryAll()
+
+// 	fmt.Println("========================================")
+// 	fmt.Println("Search items")
+// 	fmt.Println("========================================")
+// 	searchItem()
+
+// 	fmt.Println("========================================")
+// 	fmt.Println("Query the last item")
+// 	fmt.Println("========================================")
+// 	if queryItem(key) != 0 {
+// 		fmt.Println("Failed to query item key", key)
+// 		return
+// 	} else {
+// 		fmt.Println("Query item key", key, "successfully")
+// 	}
+
+// 	fmt.Println("========================================")
+// 	fmt.Println("Delete the last item")
+// 	fmt.Println("========================================")
+// 	if deleteItem(key) != 0 {
+// 		fmt.Println("Failed to delete item key", key)
+// 		return
+// 	} else {
+// 		fmt.Println("Delete item key", key)
+// 	}
+// 	fmt.Println("========================================")
+// 	fmt.Println("Delete all items")
+// 	fmt.Println("========================================")
+// 	if deleteAll() != 0 {
+// 		fmt.Println("Delete failed")
+// 		return
+// 	} else {
+// 		fmt.Println("Delete all")
+// 	}
+// }

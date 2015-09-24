@@ -41,10 +41,12 @@ func init() {
 	http.HandleFunc(BaseUrl+"deleteAll", deleteAll)
 	http.HandleFunc(BaseUrl+"images", images)
 	http.HandleFunc(BaseUrl+"items", items)
+	http.HandleFunc(BaseUrl+"items/", items)
 }
 
 func rootPage(rw http.ResponseWriter, req *http.Request) {
-	//
+	c := appengine.NewContext(req)
+	c.Debugf("This is root")
 }
 
 func images(rw http.ResponseWriter, req *http.Request) {
@@ -208,8 +210,8 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Set now as the creation time
-	item.CreateTime = time.Now()
+	// Set now as the creation time. Precision to a second.
+	item.CreateTime = time.Unix(time.Now().Unix(), 0)
 
 	// Vernon debug
 	c.Debugf("Store item %s", b)
@@ -226,21 +228,46 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 }
 
 func queryItem(rw http.ResponseWriter, req *http.Request) {
+	// To log messages
+	c := appengine.NewContext(req)
+
 	if len(req.URL.Query()) == 0 {
-		queryAll(rw, req)
+		// Get key from URL
+		tokens := strings.Split(req.URL.Path, "/")
+		var keyIndexInTokens int = 0
+		for i, v := range tokens {
+			if v == "items" {
+				keyIndexInTokens = i + 1
+			}
+		}
+		if keyIndexInTokens >= len(tokens) {
+			c.Debugf("Key is not given so that delete all items")
+			queryAll(rw, req)
+			return
+		}
+		keyString := tokens[keyIndexInTokens]
+		if keyString == "" {
+			c.Debugf("Key is empty so that delete all items")
+			queryAll(rw, req)
+		} else {
+			queryOneItem(rw, req, keyString)
+		}
 	} else {
 		searchItem(rw, req)
 	}
 }
 
 func queryAll(rw http.ResponseWriter, req *http.Request) {
+	// To access datastore and to log
+	c := appengine.NewContext(req)
+	c.Debugf("QueryAll()")
+
 	// Get all entities
 	var dst []Item
 	r := 0
-	c := appengine.NewContext(req)
 	k, err := datastore.NewQuery(ItemKind).Order("-CreateTime").GetAll(c, &dst)
 	if err != nil {
-		log.Println(err)
+		c.Errorf("%s", err)
 		r = 1
 	}
 
@@ -260,15 +287,71 @@ func queryAll(rw http.ResponseWriter, req *http.Request) {
 	// Return body
 	encoder := json.NewEncoder(rw)
 	if err = encoder.Encode(dst); err != nil {
-		log.Println(err, "in encoding result", dst)
+		c.Errorf("%s in encoding result %v", err, dst)
 	} else {
-		log.Printf("QueryAll() returns %d items\n", len(dst))
+		c.Infof("QueryAll() returns %d items", len(dst))
 	}
+}
+
+func queryOneItem(rw http.ResponseWriter, req *http.Request, keyString string) {
+	// To access datastore and to log
+	c := appengine.NewContext(req)
+	c.Debugf("QueryOneItem()")
+
+	// Entity
+	var dst Item
+	// Result
+	r := http.StatusOK
+
+	defer func() {
+		// Return status. WriteHeader() must be called before call to Write
+		if r == http.StatusOK {
+			rw.WriteHeader(http.StatusOK)
+			// Return body
+			encoder := json.NewEncoder(rw)
+			if err := encoder.Encode(dst); err != nil {
+				c.Errorf("%s in encoding result %v", err, dst)
+			}
+		} else {
+			http.Error(rw, http.StatusText(r), r)
+		}
+	}()
+
+	// Decode key from string
+	key, err := datastore.DecodeKey(keyString)
+	if err != nil {
+		c.Errorf("%s in decoding key string", err)
+		r = http.StatusBadRequest
+		return
+	}
+
+	// Get the entity
+	if err := datastore.Get(c, key, &dst); err != nil {
+		c.Errorf("%s in getting entity from datastore by key %s", err, keyString)
+		r = http.StatusNotFound
+		return
+	}
+
+	// Store key to item
+	dst.Id = keyString
+
+	// Vernon debug
+	c.Debugf("Got item %v", dst)
+	b, err := json.Marshal(dst)
+	if err != nil {
+		c.Errorf("%s in marshaling item %v", err, dst)
+	} else {
+		c.Debugf("Item JSON %s", b)
+	}
+	// GOTO defer()
+	return
 }
 
 func searchItem(rw http.ResponseWriter, req *http.Request) {
 	// Appengine
 	var c appengine.Context = appengine.NewContext(req)
+	c.Debugf("searchItem()")
+
 	// Get all entities
 	var dst []Item
 	// Error flag
@@ -276,6 +359,7 @@ func searchItem(rw http.ResponseWriter, req *http.Request) {
 	// Query
 	q := req.URL.Query()
 	f := datastore.NewQuery(ItemKind)
+
 	for key := range q {
 		switch key {
 		case "People":  // int
