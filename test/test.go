@@ -196,7 +196,7 @@ func storeItem(imgUrl string) (r int, key string) {
 // Return 0: success
 // Return 1: failed
 func queryItem(key string) int {
-	// Vernon
+	// Vernon debug
 	fmt.Println(ItemURL+"items/"+key)
 
 	// Send request
@@ -240,6 +240,52 @@ func queryItem(key string) int {
 
 // Return 0: success
 // Return 1: failed
+func updateItem(key string) int {
+	// Vernon debug
+	fmt.Println(ItemURL+"items/"+key)
+
+	// Make body
+	item := Item{
+		Id:         "",
+		People:     0,
+		Attendant:  1,
+		Image:      "",
+		CreateTime: time.Now(),
+	}
+	b, err := json.Marshal(item)
+	if err != nil {
+		fmt.Println(err, "in encoding a item as JSON")
+		return 1
+	}
+
+	// Make a PUT request
+	pReq, err := http.NewRequest("PUT", ItemURL+"items/"+key, bytes.NewReader(b))
+	if err != nil {
+		fmt.Println(err)
+		return 1
+	}
+	pReq.Header.Add("Content-Type", "application/json")
+
+	// Send request
+	var client = &http.Client{}
+	resp, err := client.Do(pReq)
+	if err != nil {
+		fmt.Println(err)
+		return 1
+	}
+	defer resp.Body.Close()
+
+	// Check response
+	fmt.Println(resp.Status, resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+
+	return 0
+}
+
+// Return 0: success
+// Return 1: failed
 func deleteItem(key string) int {
 	// Send request
 	pReq, err := http.NewRequest("DELETE", ItemURL+"items/"+key, nil)
@@ -254,7 +300,7 @@ func deleteItem(key string) int {
 	}
 	defer resp.Body.Close()
 	fmt.Println(resp.Status, resp.StatusCode)
-	if resp.StatusCode == http.StatusOK {
+	if resp.StatusCode == http.StatusNoContent {
 		return 0
 	} else {
 		return 1
@@ -330,43 +376,47 @@ func storeImage() (urlstring string) {
 	return
 }
 
-func main() {
-	key := "ag9zfnRlc3RnY3NzZXJ2ZXJyJAsSBEl0ZW0iCUl0ZW0gUm9vdAwLEgRJdGVtGICAgICQ3Z4KDA"
-	queryItem(key);
-}
-
 // func main() {
-// 	var num int = 5
-// 	var r int
-// 	var key string
+// 	key := "ag9zfnRlc3RnY3NzZXJ2ZXJyJAsSBEl0ZW0iCUl0ZW0gUm9vdAwLEgRJdGVtGICAgICQ3Z4KDA"
+// 	queryItem(key);
+// 	fmt.Println("========================================")
+// 	updateItem(key);
+// 	fmt.Println("========================================")
+// 	queryItem(key);
+// }
 
-// 	// Random seed
-// 	rand.Seed(time.Now().Unix())
+func main() {
+	var num int = 1
+	var r int
+	var key string
 
-// 	// Test suite
-// 	fmt.Println("========================================")
-// 	fmt.Println("Store an image")
-// 	fmt.Println("========================================")
-// 	imageUrlString := storeImage()
-// 	if imageUrlString == "" {
-// 		fmt.Println("Store an image failed")
-// 		return
-// 	} else {
-// 		fmt.Println("Store an image " + imageUrlString)
-// 	}
+	// Random seed
+	rand.Seed(time.Now().Unix())
 
-// 	fmt.Println("========================================")
-// 	fmt.Printf("Store %d items of the image\n", num)
-// 	fmt.Println("========================================")
-// 	for i := 1; i <= num; i++ {
-// 		r, key = storeItem(imageUrlString)
-// 		if r != 0 {
-// 			fmt.Printf("Store item %d failed\n", i)
-// 			return
-// 		} else {
-// 			fmt.Printf("Store item %d in key %s\n", i, key)
-// 		}
-// 	}
+	// Test suite
+	fmt.Println("========================================")
+	fmt.Println("Store an image")
+	fmt.Println("========================================")
+	imageUrlString := storeImage()
+	if imageUrlString == "" {
+		fmt.Println("Store an image failed")
+		return
+	} else {
+		fmt.Println("Store an image " + imageUrlString)
+	}
+
+	fmt.Println("========================================")
+	fmt.Printf("Store %d items of the image\n", num)
+	fmt.Println("========================================")
+	for i := 1; i <= num; i++ {
+		r, key = storeItem(imageUrlString)
+		if r != 0 {
+			fmt.Printf("Store item %d failed\n", i)
+			return
+		} else {
+			fmt.Printf("Store item %d in key %s\n", i, key)
+		}
+	}
 // 	fmt.Println("========================================")
 // 	fmt.Println("Query all items")
 // 	fmt.Println("========================================")
@@ -377,25 +427,46 @@ func main() {
 // 	fmt.Println("========================================")
 // 	searchItem()
 
-// 	fmt.Println("========================================")
-// 	fmt.Println("Query the last item")
-// 	fmt.Println("========================================")
-// 	if queryItem(key) != 0 {
-// 		fmt.Println("Failed to query item key", key)
-// 		return
-// 	} else {
-// 		fmt.Println("Query item key", key, "successfully")
-// 	}
+	fmt.Println("========================================")
+	fmt.Println("Query the last item")
+	fmt.Println("========================================")
+	if queryItem(key) != 0 {
+		fmt.Println("Failed to query item key", key)
+		return
+	} else {
+		fmt.Println("Query item key", key, "successfully")
+	}
 
-// 	fmt.Println("========================================")
-// 	fmt.Println("Delete the last item")
-// 	fmt.Println("========================================")
-// 	if deleteItem(key) != 0 {
-// 		fmt.Println("Failed to delete item key", key)
-// 		return
-// 	} else {
-// 		fmt.Println("Delete item key", key)
-// 	}
+	fmt.Println("========================================")
+	fmt.Println("Update the last item")
+	fmt.Println("========================================")
+	if updateItem(key) != 0 {
+		fmt.Println("Failed to update item key", key)
+		return
+	} else {
+		fmt.Println("Update item key", key, "successfully")
+	}
+
+	fmt.Println("========================================")
+	fmt.Println("Query the update item")
+	fmt.Println("========================================")
+	if queryItem(key) != 0 {
+		fmt.Println("Failed to query item key", key)
+		return
+	} else {
+		fmt.Println("Query item key", key, "successfully")
+	}
+
+	fmt.Println("========================================")
+	fmt.Println("Delete the last item")
+	fmt.Println("========================================")
+	if deleteItem(key) != 0 {
+		fmt.Println("Failed to delete item key", key)
+		return
+	} else {
+		fmt.Println("Delete item key", key)
+	}
+
 // 	fmt.Println("========================================")
 // 	fmt.Println("Delete all items")
 // 	fmt.Println("========================================")
@@ -405,4 +476,4 @@ func main() {
 // 	} else {
 // 		fmt.Println("Delete all")
 // 	}
-// }
+}

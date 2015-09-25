@@ -68,6 +68,8 @@ func items(rw http.ResponseWriter, req *http.Request) {
 		queryItem(rw, req)
 	case "POST":
 		storeItem(rw, req)
+	case "PUT":
+		updateItem(rw, req)
 	case "DELETE":
 		deleteItem(rw, req)
 	default:
@@ -422,7 +424,25 @@ func searchItem(rw http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func deleteItem(rw http.ResponseWriter, req *http.Request) {
+func updateItem(rw http.ResponseWriter, req *http.Request) {
+	// To access datastore and to log
+	c := appengine.NewContext(req)
+	c.Debugf("UpdateItem()")
+	// Result
+	r := http.StatusOK
+	// Item
+	var src Item
+
+	// Set response
+	defer func() {
+		// Return status. WriteHeader() must be called before call to Write
+		if r == http.StatusOK {
+			rw.WriteHeader(http.StatusOK)
+		} else {
+			http.Error(rw, http.StatusText(r), r)
+		}
+	}()
+
 	// Get key from URL
 	tokens := strings.Split(req.URL.Path, "/")
 	var keyIndexInTokens int = 0
@@ -432,13 +452,119 @@ func deleteItem(rw http.ResponseWriter, req *http.Request) {
 		}
 	}
 	if keyIndexInTokens >= len(tokens) {
-		log.Println("Key is not given so that delete all items")
+		c.Debugf("Key is not given")
+		r = http.StatusBadRequest
+		return
+	}
+	keyString := tokens[keyIndexInTokens]
+	if keyString == "" {
+		c.Debugf("Key is empty")
+		r = http.StatusBadRequest
+		return
+	}
+	
+	// Decode key from string
+	key, err := datastore.DecodeKey(keyString)
+	if err != nil {
+		c.Errorf("%s in decoding key string", err)
+		r = http.StatusBadRequest
+		return
+	}
+	
+	// Get data from body
+	b, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		c.Errorf("%s in reading body %s", err, b)
+		r = http.StatusBadRequest
+		return
+	}
+	if err = json.Unmarshal(b, &src); err != nil {
+		c.Errorf("%s in decoding body %s", err, b)
+		r = http.StatusBadRequest
+		return
+	}
+
+	// Update in a transaction 
+	err = datastore.RunInTransaction(c, func(c appengine.Context) error {
+		var err1 error
+		r, err1 = updateOneItemInDatastore(c, key, &src)
+		return err1
+	}, nil)
+	
+	// GOTO defer()
+	return
+}
+
+func updateOneItemInDatastore(c appengine.Context, key *datastore.Key, src *Item) (r int, err error) {
+	var dst Item
+	// Get the entity
+	if err = datastore.Get(c, key, &dst); err != nil {
+		c.Errorf("%s in getting entity from datastore by key %s", err, key.Encode())
+		r = http.StatusNotFound
+		return
+	}
+
+	// Vernon debug
+	c.Debugf("Got from user %v", src)
+	c.Debugf("Got from server %v", dst)
+
+	// Change values
+	if (src.People != 0) {
+		dst.People = src.People
+	}
+	if (src.Attendant != 0) {
+		dst.Attendant += src.Attendant
+	}
+	if (src.Image != "") {
+		dst.Image = src.Image
+	}
+	// Set now as the creation time. Precision to a second.
+	dst.CreateTime = time.Unix(time.Now().Unix(), 0)
+
+	// Vernon debug
+	c.Debugf("Update server %v", dst)
+
+	// Update to server
+	b, err := json.Marshal(dst)
+	if err != nil {
+		c.Errorf("%s in marshaling item %v", err, dst)
+		r = http.StatusBadRequest
+		return
+	}
+
+	// Vernon debug
+	c.Debugf("Convert to JSON %s", b)
+
+	// Store item into datastore
+	_, err = datastore.Put(c, key, &dst)
+	if err != nil {
+		c.Errorf("%s in storing in datastore with key %s", err, key.Encode())
+		r = http.StatusNotFound
+		return
+	}
+	
+	return
+}
+
+func deleteItem(rw http.ResponseWriter, req *http.Request) {
+	// To log
+	c := appengine.NewContext(req)
+	// Get key from URL
+	tokens := strings.Split(req.URL.Path, "/")
+	var keyIndexInTokens int = 0
+	for i, v := range tokens {
+		if v == "items" {
+			keyIndexInTokens = i + 1
+		}
+	}
+	if keyIndexInTokens >= len(tokens) {
+		c.Infof("Key is not given so that delete all items")
 		deleteAll(rw, req)
 		return
 	}
 	keyString := tokens[keyIndexInTokens]
 	if keyString == "" {
-		log.Println("Key is empty so that delete all items")
+		c.Infof("Key is empty so that delete all items")
 		deleteAll(rw, req)
 	} else {
 		deleteOneItem(rw, req, keyString)
@@ -446,18 +572,21 @@ func deleteItem(rw http.ResponseWriter, req *http.Request) {
 }
 
 func deleteAll(rw http.ResponseWriter, req *http.Request) {
+	// To access datastore and to log
+	c := appengine.NewContext(req)
+	c.Infof("deleteAll()")
+
 	// Delete root entity after other entities
 	r := 0
-	c := appengine.NewContext(req)
 	pKey := datastore.NewKey(c, ItemKind, ItemRoot, 0, nil)
 	if keys, err := datastore.NewQuery(ItemKind).KeysOnly().GetAll(c, nil); err != nil {
-		log.Println(err)
+		c.Errorf("%s", err)
 		r = 1
 	} else if err := datastore.DeleteMulti(c, keys); err != nil {
-		log.Println(err)
+		c.Errorf("%s", err)
 		r = 1
 	} else if err := datastore.Delete(c, pKey); err != nil {
-		log.Println(err)
+		c.Errorf("%s", err)
 		r = 1
 	}
 
@@ -470,6 +599,10 @@ func deleteAll(rw http.ResponseWriter, req *http.Request) {
 }
 
 func deleteOneItem(rw http.ResponseWriter, req *http.Request, keyString string) {
+	// To access datastore and to log
+	c := appengine.NewContext(req)
+	c.Infof("deleteOneItem()")
+
 	// Result
 	r := http.StatusNoContent
 	defer func() {
@@ -483,17 +616,16 @@ func deleteOneItem(rw http.ResponseWriter, req *http.Request, keyString string) 
 
 	key, err := datastore.DecodeKey(keyString)
 	if err != nil {
-		log.Println(err, "in decoding key string")
+		c.Errorf("%s in decoding key string", err)
 		r = http.StatusBadRequest
 		return
 	}
 
 	// Delete the entity
-	c := appengine.NewContext(req)
 	if err := datastore.Delete(c, key); err != nil {
-		log.Println(err, "in deleting entity by key")
+		c.Errorf("%s, in deleting entity by key", err)
 		r = http.StatusNotFound
 		return
 	}
-	log.Println(key, "is deleted")
+	c.Infof("Key %s is deleted", keyString)
 }
