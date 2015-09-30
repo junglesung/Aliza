@@ -508,18 +508,25 @@ func updateOneItemInDatastore(c appengine.Context, key *datastore.Key, src *Item
 	c.Debugf("Got from user %v", src)
 	c.Debugf("Got from server %v", dst)
 
+	// Update CreateTime when owner update information
+	// Don't update CreateTime when people attend or leave
+	var toUpdateTime bool = false
 	// Change values
 	if (src.People != 0) {
 		dst.People = src.People
+		toUpdateTime = true
 	}
 	if (src.Attendant != 0) {
 		dst.Attendant += src.Attendant
 	}
 	if (src.Image != "") {
 		dst.Image = src.Image
+		toUpdateTime = true
 	}
 	// Set now as the creation time. Precision to a second.
-	dst.CreateTime = time.Unix(time.Now().Unix(), 0)
+	if toUpdateTime == true {
+		dst.CreateTime = time.Unix(time.Now().Unix(), 0)
+	}
 
 	// Vernon debug
 	c.Debugf("Update server %v", dst)
