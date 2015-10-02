@@ -15,9 +15,11 @@ import (
 
 type Item struct {
 	Id         string    `json:"id"          datastore:"-"`
+	Image      string    `json:"image"`
 	People     int       `json:"people"`
 	Attendant  int       `json:"attendant"`
-	Image      string    `json:"image"`
+	Latitude   float64   `json:"latitude"`
+	Longitude  float64   `json:"longitude"`
 	CreateTime time.Time `json:"createtime"`
 }
 
@@ -31,9 +33,11 @@ const ItemMaxPeople = 5
 // Pring an Item
 func (b Item) String() string {
 	s := ""
+	s += fmt.Sprintln("Image:", b.Image)
 	s += fmt.Sprintln("People:", b.People)
 	s += fmt.Sprintln("Attendant:", b.Attendant)
-	s += fmt.Sprintln("Image:", b.Image)
+	s += fmt.Sprintln("Latitude:", b.Latitude)
+	s += fmt.Sprintln("Longitude:", b.Longitude)
 	s += fmt.Sprintln("CreateTime:", b.CreateTime)
 	return s
 }
@@ -85,6 +89,8 @@ func searchItem() {
 		fmt.Println(err, "in making URL")
 		return
 	}
+
+	// Set data filter
 	var q url.Values = u.Query()
 	var people int = rand.Intn(ItemMaxPeople - ItemMinPeople) + ItemMinPeople
 	q.Add("People", strconv.Itoa(people))
@@ -141,9 +147,11 @@ func storeItem(imgUrl string) (r int, key string) {
 	// Make body
 	item := Item{
 		Id:         "",
+		Image:      imgUrl,
 		People:     (rand.Intn(ItemMaxPeople - ItemMinPeople) + ItemMinPeople),
 		Attendant:  1,
-		Image:      imgUrl,
+		Latitude:   25.034238,  // Taipei 101
+		Longitude:  121.564515,  // Taipei 101
 		CreateTime: time.Now(),
 	}
 	b, err := json.Marshal(item)
@@ -219,7 +227,6 @@ func queryItem(key string) int {
 
 	// Decode body
 	var item Item
-	// var items map[string]Item = make(map[string]Item)
 	if resp.StatusCode == http.StatusOK {
 		// Decode as JSON
 		if err := json.Unmarshal(body, &item); err != nil {
@@ -247,9 +254,11 @@ func updateItem(key string) int {
 	// Make body
 	item := Item{
 		Id:         "",
+		Image:      "",
 		People:     0,
 		Attendant:  1,
-		Image:      "",
+		Latitude:   0,
+		Longitude:  0,
 		CreateTime: time.Now(),
 	}
 	b, err := json.Marshal(item)

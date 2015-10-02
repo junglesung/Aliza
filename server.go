@@ -24,9 +24,11 @@ import (
 
 type Item struct {
 	Id         string    `json:"id"          datastore:"-"`
+	Image      string    `json:"image"`
 	People     int       `json:"people"`
 	Attendant  int       `json:"attendant"`
-	Image      string    `json:"image"`
+	Latitude   float64   `json:"latitude"`
+	Longitude  float64   `json:"longitude"`
 	CreateTime time.Time `json:"createtime"`
 }
 
@@ -364,6 +366,9 @@ func searchItem(rw http.ResponseWriter, req *http.Request) {
 
 	for key := range q {
 		switch key {
+		case "Image":  // string
+			var v string = q.Get(key)
+			f = f.Filter(key+"=", v)
 		case "People":  // int
 			v, err := strconv.Atoi(q.Get(key))
 			if err != nil {
@@ -378,9 +383,20 @@ func searchItem(rw http.ResponseWriter, req *http.Request) {
 			} else {
 				f = f.Filter(key+"=", v)
 			}
-		case "Image":  // string
-			var v string = q.Get(key)
-			f = f.Filter(key+"=", v)
+		case "Latitude":  // float64
+			v, err := strconv.ParseFloat(q.Get(key), 64)
+			if err != nil {
+				c.Errorf("%s in converting %s number\n", err, key)
+			} else {
+				f = f.Filter(key+"=", v)
+			}
+		case "Longitude":  // float64
+			v, err := strconv.ParseFloat(q.Get(key), 64)
+			if err != nil {
+				c.Errorf("%s in converting %s number\n", err, key)
+			} else {
+				f = f.Filter(key+"=", v)
+			}
 		case "CreateTime":  // time.Time
 			// TODO: define the format of time so that time.Parse() can correctly parse
 			var tmp string = q.Get(key)
@@ -512,6 +528,10 @@ func updateOneItemInDatastore(c appengine.Context, key *datastore.Key, src *Item
 	// Don't update CreateTime when people attend or leave
 	var toUpdateTime bool = false
 	// Change values
+	if (src.Image != "") {
+		dst.Image = src.Image
+		toUpdateTime = true
+	}
 	if (src.People != 0) {
 		dst.People = src.People
 		toUpdateTime = true
@@ -519,14 +539,11 @@ func updateOneItemInDatastore(c appengine.Context, key *datastore.Key, src *Item
 	if (src.Attendant != 0) {
 		dst.Attendant += src.Attendant
 	}
-	if (src.Image != "") {
-		dst.Image = src.Image
-		toUpdateTime = true
-	}
 	// Set now as the creation time. Precision to a second.
 	if toUpdateTime == true {
 		dst.CreateTime = time.Unix(time.Now().Unix(), 0)
 	}
+	// Don't update Latitude and Longitude because owner can update anywhere away from the shop
 
 	// Vernon debug
 	c.Debugf("Update server %v", dst)
