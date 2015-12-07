@@ -3,7 +3,6 @@ package aliza
 import (
 	"appengine"
 	"net/http"
-	"time"
 )
 
 const BaseUrl = "/api/0.1/"
