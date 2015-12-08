@@ -15,6 +15,12 @@ func init() {
 	http.HandleFunc(BaseUrl+"images", images)
 	http.HandleFunc(BaseUrl+"items", items)
 	http.HandleFunc(BaseUrl+"items/", items)
+	http.HandleFunc(BaseUrl+"myself", UpdateMyself)  // PUT
+	http.HandleFunc(BaseUrl+"groups", groups)  // PUT
+	http.HandleFunc(BaseUrl+"groups/", groups)  // DELETE
+	http.HandleFunc(BaseUrl+"user-messages", SendUserMessage)  // POST
+	http.HandleFunc(BaseUrl+"topic-messages", SendTopicMessage)  // POST
+	http.HandleFunc(BaseUrl+"group-messages", SendGroupMessage)  // POST
 }
 
 func rootPage(rw http.ResponseWriter, req *http.Request) {
@@ -47,5 +53,20 @@ func items(rw http.ResponseWriter, req *http.Request) {
 		deleteItem(rw, req)
 	default:
 		queryAllItem(rw, req)
+	}
+}
+
+func groups(rw http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	//	case "GET":
+	//		listMember(rw, req)
+	//	case "POST":
+	//		SendMessage(rw, req)
+	case "PUT":
+		JoinGroup(rw, req)
+	case "DELETE":
+		LeaveGroup(rw, req)
+	default:
+		http.Error(rw, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 	}
 }
