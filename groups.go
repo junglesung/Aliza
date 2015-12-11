@@ -51,40 +51,42 @@ const GcmGroupURL = "https://android.googleapis.com/gcm/notification"
 // PUT ./groups"
 // Success: 204 No Content
 // Failure: 400 Bad Request, 403 Forbidden, 500 Internal Server Error
-func JoinGroup(rw http.ResponseWriter, req *http.Request) {
-	// Appengine
-	var c appengine.Context = appengine.NewContext(req)
-	// Result, 0: success, 1: failed
+//func JoinGroup(rw http.ResponseWriter, req *http.Request) {
+func JoinGroup(c appengine.Context, user GroupUser) (r int) {
+//	// Appengine
+//	var c appengine.Context = appengine.NewContext(req)
+	// Return code in a HTTP response
 	var r int = http.StatusNoContent
 	var cKey *datastore.Key = nil
-	defer func() {
-		if r == http.StatusNoContent {
-			// Changing the header after a call to WriteHeader (or Write) has no effect.
-			rw.Header().Set("Location", req.URL.String()+"/"+cKey.Encode())
-			// Return status. WriteHeader() must be called before call to Write
-			rw.WriteHeader(r)
-		} else {
-			http.Error(rw, http.StatusText(r), r)
-		}
-	}()
-
-	// Get data from body
-	b, err := ioutil.ReadAll(req.Body)
-	if err != nil {
-		c.Errorf("%s in reading body %s", err, b)
-		r = http.StatusInternalServerError
-		return
-	}
-
-	// Vernon debug
-	c.Debugf("Got body %s", b)
-
-	var user GroupUser
-	if err = json.Unmarshal(b, &user); err != nil {
-		c.Errorf("%s in decoding body %s", err, b)
-		r = http.StatusBadRequest
-		return
-	}
+	var err error = nil
+//	defer func() {
+//		if r == http.StatusNoContent {
+//			// Changing the header after a call to WriteHeader (or Write) has no effect.
+//			rw.Header().Set("Location", req.URL.String()+"/"+cKey.Encode())
+//			// Return status. WriteHeader() must be called before call to Write
+//			rw.WriteHeader(r)
+//		} else {
+//			http.Error(rw, http.StatusText(r), r)
+//		}
+//	}()
+//
+//	// Get data from body
+//	b, err := ioutil.ReadAll(req.Body)
+//	if err != nil {
+//		c.Errorf("%s in reading body %s", err, b)
+//		r = http.StatusInternalServerError
+//		return
+//	}
+//
+//	// Vernon debug
+//	c.Debugf("Got body %s", b)
+//
+//	var user GroupUser
+//	if err = json.Unmarshal(b, &user); err != nil {
+//		c.Errorf("%s in decoding body %s", err, b)
+//		r = http.StatusBadRequest
+//		return
+//	}
 
 	// Authenticate sender & Search for user registration token
 	var pUser *User
@@ -103,9 +105,8 @@ func JoinGroup(rw http.ResponseWriter, req *http.Request) {
 	token = pUser.RegistrationToken
 
 	// Search for existing group
-	var pKey *datastore.Key
 	var pGroup *Group
-	pKey, pGroup, err = searchGroup(user.GroupName, c)
+	cKey, pGroup, err = searchGroup(user.GroupName, c)
 	if err != nil {
 		c.Errorf("%s in searching existing group %s", err, user.GroupName)
 		r = http.StatusInternalServerError
@@ -114,7 +115,7 @@ func JoinGroup(rw http.ResponseWriter, req *http.Request) {
 
 	// Make GCM message body
 	var operation GroupOperation
-	if pKey == nil {
+	if cKey == nil {
 		// Create a new group on GCM server
 		operation.Operation = "create"
 		operation.Notification_key_name = user.GroupName
@@ -132,7 +133,7 @@ func JoinGroup(rw http.ResponseWriter, req *http.Request) {
 			Members: []string {user.InstanceId},
 			NotificationKey: operation.Notification_key,
 		}
-		pKey = datastore.NewKey(c, GroupKind, GroupRoot, 0, nil)
+		var pKey *datastore.Key = datastore.NewKey(c, GroupKind, GroupRoot, 0, nil)
 		cKey, err = datastore.Put(c, datastore.NewIncompleteKey(c, GroupKind, pKey), pGroup)
 		if err != nil {
 			c.Errorf("%s in storing to datastore", err)
@@ -154,7 +155,7 @@ func JoinGroup(rw http.ResponseWriter, req *http.Request) {
 
 		// Modify datastore
 		pGroup.Members = append(pGroup.Members, token)
-		cKey, err = datastore.Put(c, pKey, pGroup)
+		cKey, err = datastore.Put(c, cKey, pGroup)
 		if err != nil {
 			c.Errorf("%s in storing to datastore", err)
 			r = http.StatusInternalServerError
@@ -168,13 +169,14 @@ func JoinGroup(rw http.ResponseWriter, req *http.Request) {
 // Header {"Instance-Id":"..."}
 // Success returns 204 No Content
 // Failure returns 400 Bad Request, 403 Forbidden, 500 Internal Server Error
-func LeaveGroup(rw http.ResponseWriter, req *http.Request) {
-	// Appengine
-	var c appengine.Context = appengine.NewContext(req)
+//func LeaveGroup(rw http.ResponseWriter, req *http.Request) {
+func LeaveGroup(c appengine.Context, instanceId string) (r int) {
+//	// Appengine
+//	var c appengine.Context = appengine.NewContext(req)
 	// Result, 0: success, 1: failed
 	var r int = http.StatusNoContent
-	// Sender instance ID
-	var instanceId string
+//	// Sender instance ID
+//	var instanceId string
 	// Sender registration token
 	var registrationToken string
 	// Group name to leave
@@ -186,23 +188,23 @@ func LeaveGroup(rw http.ResponseWriter, req *http.Request) {
 	var pGroup *Group
 	// Error
 	var err error
-	// Function to write response header
-	defer func() {
-		if r == http.StatusNoContent {
-			// Return status. WriteHeader() must be called before call to Write
-			rw.WriteHeader(r)
-		} else {
-			http.Error(rw, http.StatusText(r), r)
-		}
-	}()
-
-	// Get instance ID from header
-	instanceId = req.Header.Get("Instance-Id")
-	if instanceId == "" {
-		c.Warningf("Missing instance ID. Ignore the request.")
-		r = http.StatusBadRequest
-		return
-	}
+//	// Function to write response header
+//	defer func() {
+//		if r == http.StatusNoContent {
+//			// Return status. WriteHeader() must be called before call to Write
+//			rw.WriteHeader(r)
+//		} else {
+//			http.Error(rw, http.StatusText(r), r)
+//		}
+//	}()
+//
+//	// Get instance ID from header
+//	instanceId = req.Header.Get("Instance-Id")
+//	if instanceId == "" {
+//		c.Warningf("Missing instance ID. Ignore the request.")
+//		r = http.StatusBadRequest
+//		return
+//	}
 
 	// Authenticate sender & Search for user registration token
 	var pUser *User
