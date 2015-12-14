@@ -39,6 +39,9 @@ const GaeProjectNumber = "492596673998"
 const InstanceIdVerificationUrl = "https://iid.googleapis.com/iid/info/"
 const GcmApiKey = "AIzaSyBgH4A9CdPgc-Kh54j5TLgKl7x3YCGBtOU"
 
+// HTTP header
+const HttpHeaderInstanceId = "Instance-Id"
+
 // PUT ./myself"
 // Success: 200 OK
 // Failure: 400 Bad Request
@@ -231,9 +234,17 @@ func verifyRequest(instanceId string, c appengine.Context) (isValid bool, err er
 
 	// Verify registration token
 	if pUser == nil {
-		c.Warningf("Invalid instance ID %s is not found in datastore", instanceId)
+		c.Warningf("Invalid instance ID %s is not found in datastore. Ignore the request", instanceId)
 		return
 	}
 	isValid = true
 	return
+}
+
+func VerifyRequest(rw http.ResponseWriter, req *http.Request) (isvalid int) {
+	var instanceId string = req.Header.Get(HttpHeaderInstanceId)
+	var c appengine.Context = appengine.NewContext(req)
+	var isValid bool = false
+	isValid, _ = verifyRequest(instanceId, c);
+	return isValid
 }

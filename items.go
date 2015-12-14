@@ -12,14 +12,22 @@ import (
 	"time"
 )
 
+type ItemMember struct {
+	UserKey string
+	Attendant int
+}
+
 type Item struct {
-	Id         string    `json:"id"          datastore:"-"`
-	Image      string    `json:"image"`
-	People     int       `json:"people"`
-	Attendant  int       `json:"attendant"`
-	Latitude   float64   `json:"latitude"`
-	Longitude  float64   `json:"longitude"`
-	CreateTime time.Time `json:"createtime"`
+	Id           string     `json:"id"          datastore:"-"`
+	Image        string     `json:"image"`
+	People       int        `json:"people"`
+	Attendant    int        `json:"attendant"`
+	Latitude     float64    `json:"latitude"`
+	Longitude    float64    `json:"longitude"`
+	CreateTime   time.Time  `json:"createtime"`
+	// Members are whom join this item. The first member is the item owner.
+	// When the first member leaves, delete the item.
+	Member     []ItemMember `json:"member"`
 }
 
 const ItemKind = "Item"
