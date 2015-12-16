@@ -241,10 +241,10 @@ func verifyRequest(instanceId string, c appengine.Context) (isValid bool, err er
 	return
 }
 
-func VerifyRequest(rw http.ResponseWriter, req *http.Request) (isvalid int) {
+func VerifyRequest(req *http.Request) (isValid bool) {
 	var instanceId string = req.Header.Get(HttpHeaderInstanceId)
 	var c appengine.Context = appengine.NewContext(req)
-	var isValid bool = false
+	isValid = false
 	isValid, _ = verifyRequest(instanceId, c);
-	return isValid
+	return
 }

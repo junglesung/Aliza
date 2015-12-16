@@ -42,6 +42,13 @@ func images(rw http.ResponseWriter, req *http.Request) {
 }
 
 func items(rw http.ResponseWriter, req *http.Request) {
+	// Authenticate request
+	if isValid := VerifyRequest(req); isValid == false {
+		http.Error(rw, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+
+	// Check HTTP method
 	switch req.Method {
 	case "GET":
 		queryItem(rw, req)

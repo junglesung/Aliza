@@ -51,42 +51,52 @@ const GcmGroupURL = "https://android.googleapis.com/gcm/notification"
 // PUT ./groups"
 // Success: 204 No Content
 // Failure: 400 Bad Request, 403 Forbidden, 500 Internal Server Error
-//func JoinGroup(rw http.ResponseWriter, req *http.Request) {
-func JoinGroup(c appengine.Context, user GroupUser) (r int) {
-//	// Appengine
-//	var c appengine.Context = appengine.NewContext(req)
+func JoinGroup(rw http.ResponseWriter, req *http.Request) {
+	// Appengine
+	var c appengine.Context = appengine.NewContext(req)
 	// Return code in a HTTP response
 	var r int = http.StatusNoContent
+	var err error = nil
+
+	// Write response finally
+	defer func() {
+		if r == http.StatusNoContent {
+			// Changing the header after a call to WriteHeader (or Write) has no effect.
+			// ... Ex, rw.Header().Set("Location", req.URL.String() + "/" + cKey.Encode())
+			// Return status. WriteHeader() must be called before call to Write
+			rw.WriteHeader(r)
+		} else {
+			http.Error(rw, http.StatusText(r), r)
+		}
+	}()
+
+	// Get data from body
+	b, err := ioutil.ReadAll(req.Body)
+	if err != nil {
+		c.Errorf("%s in reading body %s", err, b)
+		r = http.StatusInternalServerError
+		return
+	}
+
+	// Vernon debug
+	c.Debugf("Got body %s", b)
+
+	var user GroupUser
+	if err = json.Unmarshal(b, &user); err != nil {
+		c.Errorf("%s in decoding body %s", err, b)
+		r = http.StatusBadRequest
+		return
+	}
+
+	r = joinGroup(c, user)
+}
+
+func joinGroup(c appengine.Context, user GroupUser) (r int) {
 	var cKey *datastore.Key = nil
 	var err error = nil
-//	defer func() {
-//		if r == http.StatusNoContent {
-//			// Changing the header after a call to WriteHeader (or Write) has no effect.
-//			rw.Header().Set("Location", req.URL.String()+"/"+cKey.Encode())
-//			// Return status. WriteHeader() must be called before call to Write
-//			rw.WriteHeader(r)
-//		} else {
-//			http.Error(rw, http.StatusText(r), r)
-//		}
-//	}()
-//
-//	// Get data from body
-//	b, err := ioutil.ReadAll(req.Body)
-//	if err != nil {
-//		c.Errorf("%s in reading body %s", err, b)
-//		r = http.StatusInternalServerError
-//		return
-//	}
-//
-//	// Vernon debug
-//	c.Debugf("Got body %s", b)
-//
-//	var user GroupUser
-//	if err = json.Unmarshal(b, &user); err != nil {
-//		c.Errorf("%s in decoding body %s", err, b)
-//		r = http.StatusBadRequest
-//		return
-//	}
+
+	// Initial variables
+	r = http.StatusNoContent
 
 	// Authenticate sender & Search for user registration token
 	var pUser *User
@@ -163,63 +173,39 @@ func JoinGroup(c appengine.Context, user GroupUser) (r int) {
 		}
 		c.Infof("Add user %s to group %s", user.InstanceId, user.GroupName)
 	}
+	return
 }
 
 // DELETE ./groups/xxx", xxx: Group name
 // Header {"Instance-Id":"..."}
 // Success returns 204 No Content
 // Failure returns 400 Bad Request, 403 Forbidden, 500 Internal Server Error
-//func LeaveGroup(rw http.ResponseWriter, req *http.Request) {
-func LeaveGroup(c appengine.Context, instanceId string) (r int) {
-//	// Appengine
-//	var c appengine.Context = appengine.NewContext(req)
+func LeaveGroup(rw http.ResponseWriter, req *http.Request) {
+	// Appengine
+	var c appengine.Context = appengine.NewContext(req)
 	// Result, 0: success, 1: failed
 	var r int = http.StatusNoContent
-//	// Sender instance ID
-//	var instanceId string
-	// Sender registration token
-	var registrationToken string
+	// Sender instance ID
+	var instanceId string
 	// Group name to leave
 	var groupName string
-	// Then operation sent to GCM server
-	var operation GroupOperation
-	// Group in datastore
-	var cKey *datastore.Key
-	var pGroup *Group
-	// Error
-	var err error
-//	// Function to write response header
-//	defer func() {
-//		if r == http.StatusNoContent {
-//			// Return status. WriteHeader() must be called before call to Write
-//			rw.WriteHeader(r)
-//		} else {
-//			http.Error(rw, http.StatusText(r), r)
-//		}
-//	}()
-//
-//	// Get instance ID from header
-//	instanceId = req.Header.Get("Instance-Id")
-//	if instanceId == "" {
-//		c.Warningf("Missing instance ID. Ignore the request.")
-//		r = http.StatusBadRequest
-//		return
-//	}
+	// Function to write response header
+	defer func() {
+		if r == http.StatusNoContent {
+			// Return status. WriteHeader() must be called before call to Write
+			rw.WriteHeader(r)
+		} else {
+			http.Error(rw, http.StatusText(r), r)
+		}
+	}()
 
-	// Authenticate sender & Search for user registration token
-	var pUser *User
-	_, pUser, err = searchUser(instanceId, c)
-	if err != nil {
-		c.Errorf("%s in searching user %v", err, instanceId)
-		r = http.StatusInternalServerError
+	// Get instance ID from header
+	instanceId = req.Header.Get("Instance-Id")
+	if instanceId == "" {
+		c.Warningf("Missing instance ID. Ignore the request.")
+		r = http.StatusBadRequest
 		return
 	}
-	if pUser == nil {
-		c.Errorf("User %s not found. Invalid request. Ignore.", instanceId)
-		r = http.StatusForbidden
-		return
-	}
-	registrationToken = pUser.RegistrationToken
 
 	// Get group name from URL
 	var tokens []string
@@ -238,6 +224,38 @@ func LeaveGroup(c appengine.Context, instanceId string) (r int) {
 
 	// Vernon debug
 	c.Debugf("User %s is going to leave group %s", instanceId, groupName)
+
+	r = leaveGroup(c, instanceId, groupName)
+}
+
+func leaveGroup(c appengine.Context, instanceId string, groupName string) (r int) {
+	// Sender registration token
+	var registrationToken string
+	// Then operation sent to GCM server
+	var operation GroupOperation
+	// Group in datastore
+	var cKey *datastore.Key
+	var pGroup *Group
+	// Error
+	var err error
+
+	// Initial variables
+	r = http.StatusNoContent
+
+	// Authenticate sender & Search for user registration token
+	var pUser *User
+	_, pUser, err = searchUser(instanceId, c)
+	if err != nil {
+		c.Errorf("%s in searching user %v", err, instanceId)
+		r = http.StatusInternalServerError
+		return
+	}
+	if pUser == nil {
+		c.Errorf("User %s not found. Invalid request. Ignore.", instanceId)
+		r = http.StatusForbidden
+		return
+	}
+	registrationToken = pUser.RegistrationToken
 
 	// Search for existing group
 	cKey, pGroup, err = searchGroup(groupName, c)
@@ -324,6 +342,8 @@ func LeaveGroup(c appengine.Context, instanceId string) (r int) {
 		}
 		c.Infof("Remove user %s from group %s", instanceId, groupName)
 	}
+
+	return
 }
 
 // Send a Google Cloud Messaging Device Group operation to GCM server

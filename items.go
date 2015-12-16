@@ -27,7 +27,7 @@ type Item struct {
 	CreateTime   time.Time  `json:"createtime"`
 	// Members are whom join this item. The first member is the item owner.
 	// When the first member leaves, delete the item.
-	Member     []ItemMember `json:"member"`
+	Members    []ItemMember `json:"member"`
 }
 
 const ItemKind = "Item"
@@ -37,16 +37,19 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 	// Appengine
 	var c appengine.Context = appengine.NewContext(req)
 	// Result, 0: success, 1: failed
-	var r int = 0
+	var r int = http.StatusCreated
 	var cKey *datastore.Key = nil
+
+	// Write response finally
 	defer func() {
 		// Return status. WriteHeader() must be called before call to Write
-		if r == 0 {
+		if r == http.StatusCreated {
 			// Changing the header after a call to WriteHeader (or Write) has no effect.
 			rw.Header().Set("Location", req.URL.String()+"/"+cKey.Encode())
 			rw.WriteHeader(http.StatusCreated)
 		} else {
-			http.Error(rw, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			// http.StatusBadRequest
+			http.Error(rw, http.StatusText(r), r)
 		}
 	}()
 
@@ -54,15 +57,54 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 	b, err := ioutil.ReadAll(req.Body)
 	if err != nil {
 		c.Errorf("%s in reading body %s", err, b)
-		r = 1
+		r = http.StatusBadRequest
 		return
 	}
 	var item Item
 	if err = json.Unmarshal(b, &item); err != nil {
 		c.Errorf("%s in decoding body %s", err, b)
-		r = 1
+		r = http.StatusBadRequest
 		return
 	}
+
+	// Verify data
+	if item.Image == "" {
+		c.Errorf("The request does not specify item image URL")
+		r = http.StatusBadRequest
+		return
+	}
+	if item.Attendant <= 0 {
+		c.Errorf("Item attendant %d must be >= 0", item.Attendant)
+		r = http.StatusBadRequest
+		return
+	}
+	if item.Attendant >= item.People {
+		c.Errorf("Item attendant %d can't be greater or equal to item people %d", item.Attendant, item.People)
+		r = http.StatusBadRequest
+		return
+	}
+	if item.Latitude < -90 || item.Latitude > 90 {
+		c.Errorf("Latitude %d should be -90~90", item.Latitude)
+		r = http.StatusBadRequest
+		return
+	}
+	if item.Longitude < -180 || item.Longitude > 180 {
+		c.Errorf("Latitude %d should be -180~180", item.Longitude)
+		r = http.StatusBadRequest
+		return
+	}
+
+	// Set the first member as owner to the user key
+	var pUserKey *datastore.Key
+	var instanceId string = req.Header.Get(HttpHeaderInstanceId)
+	if pUserKey, _, err = searchUser(instanceId, c); err != nil {
+		c.Errorf("%s in searching user %v", err, instanceId)
+		r = http.StatusInternalServerError
+		return
+	}
+	item.Members = make([]ItemMember, 1)
+	item.Members[0].UserKey = pUserKey.Encode()
+	item.Members[0].Attendant = item.Attendant
 
 	// Set now as the creation time. Precision to a second.
 	item.CreateTime = time.Unix(time.Now().Unix(), 0)
@@ -76,7 +118,7 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		c.Errorf("%s in storing in datastore", err)
 		log.Println(err)
-		r = 1
+		r = http.StatusInternalServerError
 		return
 	}
 }
