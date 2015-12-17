@@ -85,13 +85,13 @@ func UpdateMyself(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Check registration token starts with instance ID. That's the rule of Google API service authenticity
-	// Also check registration token is official-signed by sending the token to Google token authenticity check service
-	if user.RegistrationToken[0:len(user.InstanceId)] != user.InstanceId || isRegistrationTokenValid(user.RegistrationToken, c) == false {
-		c.Errorf("Instance ID %s is invalid", user.InstanceId)
+
+	var tokenPrefix string = user.RegistrationToken[0:len(user.InstanceId)]
+	if tokenPrefix != user.InstanceId {
+		c.Errorf("Token prefix %s is different from Instance ID %s", tokenPrefix, user.InstanceId)
 		r = 1
 		return
 	}
-
 	// Set now as the creation time. Precision to a second.
 	user.LastUpdateTime = time.Unix(time.Now().Unix(), 0)
 
@@ -105,6 +105,13 @@ func UpdateMyself(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if pKey == nil {
+		// Check registration token is official-signed by sending the token to Google token authenticity check service
+		if isRegistrationTokenValid(user.RegistrationToken, c) == false {
+			c.Errorf("Google says %s is not a valid token", user.RegistrationToken)
+			r = 1
+			return
+		}
+
 		// Add new user into datastore
 		pKey = datastore.NewKey(c, UserKind, UserRoot, 0, nil)
 		cKey, err = datastore.Put(c, datastore.NewIncompleteKey(c, UserKind, pKey), &user)
@@ -118,6 +125,14 @@ func UpdateMyself(rw http.ResponseWriter, req *http.Request) {
 		// Duplicate request. Do nothing to datastore and return existing key
 		cKey = pKey
 	} else {
+		// Check registration token is official-signed by sending the token to Google token authenticity check service
+		if isRegistrationTokenValid(user.RegistrationToken, c) == false {
+			c.Errorf("Google says %s is not a valid token", user.RegistrationToken)
+			r = 1
+			return
+		}
+
+		// Update user token in datastore
 		cKey, err = datastore.Put(c, pKey, &user)
 		if err != nil {
 			c.Errorf("%s in storing to datastore", err)
@@ -152,14 +167,14 @@ func isRegistrationTokenValid(token string, c appengine.Context) (isValid bool) 
 	// A Google APP Engine process must end within 60 seconds. So sleep no more than 16 seconds each retry.
 	for sleepTime = 1; sleepTime <= 16; sleepTime *= 2 {
 		resp, err = pClient.Do(pReq)
+		// Retry while server is temporary invalid
 		if err != nil {
 			c.Errorf("%s in verifying instance ID %s", err, token)
-			return false
-		}
-		// Retry while server is temporary invalid
-		if resp.StatusCode != http.StatusServiceUnavailable {
+		} else if resp.StatusCode != http.StatusServiceUnavailable {
 			break
 		}
+
+		c.Warningf("Server is temporary unavailable. Wait 1 secs for retry...")
 		time.Sleep(1 * time.Second)
 	}
 

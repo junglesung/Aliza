@@ -13,8 +13,8 @@ import (
 )
 
 type ItemMember struct {
-	UserKey string
-	Attendant int
+	UserKey      string     `json:"userkey"`
+	Attendant    int        `json:"attendant"`
 }
 
 type Item struct {
@@ -27,7 +27,7 @@ type Item struct {
 	CreateTime   time.Time  `json:"createtime"`
 	// Members are whom join this item. The first member is the item owner.
 	// When the first member leaves, delete the item.
-	Members    []ItemMember `json:"member"`
+	Members    []ItemMember `json:"members"`
 }
 
 const ItemKind = "Item"
@@ -170,6 +170,9 @@ func queryAllItem(rw http.ResponseWriter, req *http.Request) {
 	// Map keys and items
 	for i, v := range k {
 		dst[i].Id = v.Encode()
+
+		// Vernon debug
+		c.Debugf("Item from datastore %+v", dst[i])
 	}
 
 	// Return status. WriteHeader() must be called before call to Write
@@ -179,6 +182,10 @@ func queryAllItem(rw http.ResponseWriter, req *http.Request) {
 		http.Error(rw, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
+
+	// Vernon debug
+	b, _ := json.Marshal(dst)
+	c.Debugf("Item JSON %s", b)
 
 	// Return body
 	encoder := json.NewEncoder(rw)
