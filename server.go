@@ -29,6 +29,12 @@ func rootPage(rw http.ResponseWriter, req *http.Request) {
 }
 
 func images(rw http.ResponseWriter, req *http.Request) {
+	// Authenticate request
+	if isValid := VerifyRequest(req); isValid == false {
+		http.Error(rw, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+
 	switch req.Method {
 	// case "GET":
 		// queryImage(rw, req)

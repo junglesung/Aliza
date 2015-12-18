@@ -121,6 +121,8 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 		r = http.StatusInternalServerError
 		return
 	}
+
+	// TODO: Create a new GCM group with the member
 }
 
 func queryItem(rw http.ResponseWriter, req *http.Request) {
@@ -399,6 +401,23 @@ func updateItem(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Organize data
+	var pKeyUser *datastore.Key
+	var instanceId string = req.Header.Get(HttpHeaderInstanceId)
+	if pKeyUser, _, err = searchUser(instanceId, c); err != nil {
+		c.Errorf("%s in searching user instance ID %s", err, instanceId)
+		r = http.StatusInternalServerError
+		return
+	}
+	if pKeyUser == nil {
+		c.Errorf("User instance ID %s is not found", instanceId)
+		r = http.StatusInternalServerError
+		return
+	}
+	src.Members = make([]ItemMember, 1)
+	src.Members[0].UserKey = pKeyUser.Encode()
+	src.Members[0].Attendant = src.Attendant
+
 	// Update in a transaction
 	err = datastore.RunInTransaction(c, func(c appengine.Context) error {
 		var err1 error
@@ -411,7 +430,13 @@ func updateItem(rw http.ResponseWriter, req *http.Request) {
 }
 
 func updateOneItemInDatastore(c appengine.Context, key *datastore.Key, src *Item) (r int, err error) {
+	// Existing item got from datastore
 	var dst Item
+
+	// Initial variables
+	r = http.StatusOK
+	err = nil
+
 	// Get the entity
 	if err = datastore.Get(c, key, &dst); err != nil {
 		c.Errorf("%s in getting entity from datastore by key %s", err, key.Encode())
@@ -423,32 +448,73 @@ func updateOneItemInDatastore(c appengine.Context, key *datastore.Key, src *Item
 	c.Debugf("Got from user %v", src)
 	c.Debugf("Got from server %v", dst)
 
-	// Update CreateTime when owner update information
-	// Don't update CreateTime when people attend or leave
-	var toUpdateTime bool = false
-	// Change values
-	if (src.Image != "") {
-		dst.Image = src.Image
-		toUpdateTime = true
+	// Search whether the member exists
+	var i int
+	a := dst.Members
+	m := src.Members[0]
+	for i = 0; i < len(a); i++ {
+		if a[i].UserKey == m.UserKey {
+			// The member already exists
+			break;
+		}
 	}
-	if (src.People != 0) {
-		dst.People = src.People
-		toUpdateTime = true
+	if i == len(a) {
+		// Append the new member
+		a = append(a, m)
+		// TODO: Join the member to the GCM group
+	} else {
+		// Add attendant to the existing member
+		a[i].Attendant += m.Attendant
 	}
-	if (src.Attendant != 0) {
-		dst.Attendant += src.Attendant
+	if a[i].Attendant == 0 {
+		// The member leaves
+		if i == 0 {
+			// Delete item because its owner leaves
+			if err = datastore.Delete(c, key); err != nil {
+				c.Errorf("%s, in deleting entity by key", err)
+				r = http.StatusInternalServerError
+				return
+			}
+			c.Infof("Item %s is deleted", key.Encode())
+			// TODO: Let all members leave the GCM group
+			return
+		} else {
+			// Delete the member from the item
+			a[i] = a[len(a)-1]
+			a[len(a)-1] = ItemMember{UserKey:"", Attendant:0}
+			a = a[:len(a)-1]
+			// TODO: Let the member leave the GCM group
+		}
 	}
-	// Set now as the creation time. Precision to a second.
-	if toUpdateTime == true {
-		dst.CreateTime = time.Unix(time.Now().Unix(), 0)
+	if i == 0 {
+		// Only the owner can update other properties
+		// Update CreateTime when owner update information
+		var toUpdateTime bool = false
+		// Change values
+		if (src.Image != "") {
+			dst.Image = src.Image
+			toUpdateTime = true
+		}
+		if (src.People != 0) {
+			dst.People = src.People
+			toUpdateTime = true
+		}
+		if (src.Attendant != 0) {
+			dst.Attendant += src.Attendant
+		}
+		// Set now as the creation time. Precision to a second.
+		if toUpdateTime == true {
+			dst.CreateTime = time.Unix(time.Now().Unix(), 0)
+		}
+		// Don't update Latitude and Longitude because owner can update anywhere away from the shop
 	}
-	// Don't update Latitude and Longitude because owner can update anywhere away from the shop
 
 	// Vernon debug
 	c.Debugf("Update server %v", dst)
 
 	// Update to server
-	b, err := json.Marshal(dst)
+	var b []byte
+	b, err = json.Marshal(dst)
 	if err != nil {
 		c.Errorf("%s in marshaling item %v", err, dst)
 		r = http.StatusBadRequest
