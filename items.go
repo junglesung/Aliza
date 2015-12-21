@@ -18,16 +18,19 @@ type ItemMember struct {
 }
 
 type Item struct {
-	Id           string     `json:"id"          datastore:"-"`
-	Image        string     `json:"image"`
-	People       int        `json:"people"`
-	Attendant    int        `json:"attendant"`
-	Latitude     float64    `json:"latitude"`
-	Longitude    float64    `json:"longitude"`
-	CreateTime   time.Time  `json:"createtime"`
+	Id             string     `json:"id"          datastore:"-"`
+	Image          string     `json:"image"`
+	People         int        `json:"people"`
+	Attendant      int        `json:"attendant"`
+	Latitude       float64    `json:"latitude"`
+	Longitude      float64    `json:"longitude"`
+	CreateTime     time.Time  `json:"createtime"`
 	// Members are whom join this item. The first member is the item owner.
 	// When the first member leaves, delete the item.
-	Members    []ItemMember `json:"members"`
+	Members      []ItemMember `json:"members"`
+	// Google Cloud Messaging group unique name and ID. Reference: https://developers.google.com/cloud-messaging/notifications
+	GcmGroupName   string     `json:"gcmgroupname"`
+	GcmGroupKey    string     `json:"gcmgroupkey"`
 }
 
 const ItemKind = "Item"
@@ -95,9 +98,10 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Set the first member as owner to the user key
+	var pUser    *User
 	var pUserKey *datastore.Key
 	var instanceId string = req.Header.Get(HttpHeaderInstanceId)
-	if pUserKey, _, err = searchUser(instanceId, c); err != nil {
+	if pUserKey, pUser, err = searchUser(instanceId, c); err != nil {
 		c.Errorf("%s in searching user %v", err, instanceId)
 		r = http.StatusInternalServerError
 		return
@@ -109,8 +113,31 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 	// Set now as the creation time. Precision to a second.
 	item.CreateTime = time.Unix(time.Now().Unix(), 0)
 
+	// Set GCM group name
+	item.GcmGroupName = pUserKey.Encode() + strconv.FormatInt(item.CreateTime.UnixNano(), 16)
+
 	// Vernon debug
-	c.Debugf("Store item %s", b)
+	c.Debugf("Create a GCM group...")
+
+	// Create a new GCM group with the owner
+	var operation GroupOperation
+	var gcmResponseCode int
+	// Create a new group on GCM server with the name of owner's user key
+	operation.Operation = "create"
+	operation.Notification_key_name = item.GcmGroupName
+	operation.Registration_ids = []string{pUser.RegistrationToken}
+	if gcmResponseCode = sendGroupOperationToGcm(&operation, c); r != http.StatusOK {
+		c.Errorf("Send group operation to GCM failed")
+		r = gcmResponseCode
+		return
+	}
+	c.Infof("GCM group %s is created", item.GcmGroupName)
+
+	// Set GCM group key
+	item.GcmGroupKey = operation.Notification_key
+
+	// Vernon debug
+	c.Debugf("Store item %+v", item)
 
 	// Store item into datastore
 	pKey := datastore.NewKey(c, ItemKind, ItemRoot, 0, nil)
@@ -121,8 +148,6 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 		r = http.StatusInternalServerError
 		return
 	}
-
-	// TODO: Create a new GCM group with the member
 }
 
 func queryItem(rw http.ResponseWriter, req *http.Request) {
@@ -402,9 +427,10 @@ func updateItem(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Organize data
+	var pUser    *User
 	var pKeyUser *datastore.Key
 	var instanceId string = req.Header.Get(HttpHeaderInstanceId)
-	if pKeyUser, _, err = searchUser(instanceId, c); err != nil {
+	if pKeyUser, pUser, err = searchUser(instanceId, c); err != nil {
 		c.Errorf("%s in searching user instance ID %s", err, instanceId)
 		r = http.StatusInternalServerError
 		return
@@ -421,7 +447,7 @@ func updateItem(rw http.ResponseWriter, req *http.Request) {
 	// Update in a transaction
 	err = datastore.RunInTransaction(c, func(c appengine.Context) error {
 		var err1 error
-		r, err1 = updateOneItemInDatastore(c, key, &src)
+		r, err1 = updateOneItemInDatastore(c, key, &src, pUser)
 		return err1
 	}, nil)
 
@@ -429,9 +455,13 @@ func updateItem(rw http.ResponseWriter, req *http.Request) {
 	return
 }
 
-func updateOneItemInDatastore(c appengine.Context, key *datastore.Key, src *Item) (r int, err error) {
+func updateOneItemInDatastore(c appengine.Context, key *datastore.Key, src *Item, pRequestUser *User) (r int, err error) {
 	// Existing item got from datastore
 	var dst Item
+	// The operation structure which will be sent to GCM server
+	var operation GroupOperation
+	// The response code received from GCM server
+	var gcmResponseCode  int
 
 	// Initial variables
 	r = http.StatusOK
@@ -448,6 +478,9 @@ func updateOneItemInDatastore(c appengine.Context, key *datastore.Key, src *Item
 	c.Debugf("Got from user %v", src)
 	c.Debugf("Got from server %v", dst)
 
+	// Modify attendant
+	dst.Attendant += src.Attendant
+
 	// Search whether the member exists
 	var i int
 	a := dst.Members
@@ -461,33 +494,105 @@ func updateOneItemInDatastore(c appengine.Context, key *datastore.Key, src *Item
 	if i == len(a) {
 		// Append the new member
 		a = append(a, m)
-		// TODO: Join the member to the GCM group
+
+		// Vernon debug
+		c.Infof("Adding user %s into GCM group %s", pRequestUser.InstanceId, dst.GcmGroupName)
+
+		// Join the member to the GCM group
+		operation.Operation = "add"
+		operation.Notification_key_name = dst.GcmGroupName
+		operation.Notification_key = dst.GcmGroupKey
+		operation.Registration_ids = []string{pRequestUser.RegistrationToken}
+		if gcmResponseCode = sendGroupOperationToGcm(&operation, c); r != http.StatusOK {
+			c.Errorf("Send group operation to GCM failed")
+			r = gcmResponseCode
+			return
+		}
+
+		// Vernon debug
+		c.Infof("Notify user %s attends item %s and reaches %d/%d", pRequestUser.InstanceId, dst.GcmGroupName, dst.Attendant, dst.People)
+
+		// TODO: Notify all members that a new member attends and current attendant
 	} else {
 		// Add attendant to the existing member
 		a[i].Attendant += m.Attendant
+
+		// Vernon debug
+		c.Infof("Existing member %s attends %d more and reaches %d/%d", m.UserKey, m.Attendant, dst.Attendant, dst.People)
+
+		// TODO: Notify all members current attendant
 	}
 	if a[i].Attendant == 0 {
 		// The member leaves
 		if i == 0 {
 			// Delete item because its owner leaves
+
+			// Let all members leave the GCM group so that the group will be removed at the same time
+			operation.Operation = "remove"
+			operation.Notification_key_name = dst.GcmGroupName
+			operation.Notification_key = dst.GcmGroupKey
+
+			// Set all members' registration token
+			for _, v := range a {
+				var user User
+				var pUserKey *datastore.Key
+
+				// Search user registration token
+				if pUserKey, err = datastore.DecodeKey(v.UserKey); err != nil {
+					// This should never happen
+					c.Errorf("%s in decodeing user key %s of existing member in item %s. This should never happen.", err, v.UserKey, key.Encode())
+					continue
+				}
+				if err = datastore.Get(c, pUserKey, &user); err != nil {
+					// This should never happen
+					c.Errorf("%s in getting user from datastore with key %s. This should never happen.", err, v.UserKey)
+					continue
+				}
+
+				operation.Registration_ids = append(operation.Registration_ids, user.RegistrationToken)
+			}
+
+			// Send the operation to GCM server
+			if gcmResponseCode = sendGroupOperationToGcm(&operation, c); gcmResponseCode != http.StatusOK {
+				c.Warningf("Send group operation %+v to GCM faied", operation)
+				r = gcmResponseCode
+				return
+			}
+			c.Infof("All user %s is removed from GCM group %s", operation.Registration_ids, operation.Notification_key_name)
+
+			// TODO: Notify all members that the items is closed
+
+			// Delete item from datastore
 			if err = datastore.Delete(c, key); err != nil {
 				c.Errorf("%s, in deleting entity by key", err)
 				r = http.StatusInternalServerError
 				return
 			}
 			c.Infof("Item %s is deleted", key.Encode())
-			// TODO: Let all members leave the GCM group
 			return
 		} else {
+			// TODO: Let the member leave the GCM group
+			operation.Operation = "remove"
+			operation.Notification_key_name = dst.GcmGroupName
+			operation.Notification_key = dst.GcmGroupKey
+			operation.Registration_ids = []string{pRequestUser.RegistrationToken}
+			if gcmResponseCode = sendGroupOperationToGcm(&operation, c); gcmResponseCode != http.StatusOK {
+				c.Errorf("Send group operation %+v to GCM failed", operation)
+				r = gcmResponseCode
+				return
+			}
+
+			// TODO: Notify all members that a member leaves and current attendant
+
 			// Delete the member from the item
 			a[i] = a[len(a)-1]
 			a[len(a)-1] = ItemMember{UserKey:"", Attendant:0}
 			a = a[:len(a)-1]
-			// TODO: Let the member leave the GCM group
 		}
 	}
+
+	// Only the owner can update other properties
 	if i == 0 {
-		// Only the owner can update other properties
 		// Update CreateTime when owner update information
 		var toUpdateTime bool = false
 		// Change values
@@ -499,30 +604,17 @@ func updateOneItemInDatastore(c appengine.Context, key *datastore.Key, src *Item
 			dst.People = src.People
 			toUpdateTime = true
 		}
-		if (src.Attendant != 0) {
-			dst.Attendant += src.Attendant
-		}
 		// Set now as the creation time. Precision to a second.
 		if toUpdateTime == true {
 			dst.CreateTime = time.Unix(time.Now().Unix(), 0)
 		}
 		// Don't update Latitude and Longitude because owner can update anywhere away from the shop
+
+		// TODO: Notify all members that the properties were modified
 	}
 
 	// Vernon debug
-	c.Debugf("Update server %v", dst)
-
-	// Update to server
-	var b []byte
-	b, err = json.Marshal(dst)
-	if err != nil {
-		c.Errorf("%s in marshaling item %v", err, dst)
-		r = http.StatusBadRequest
-		return
-	}
-
-	// Vernon debug
-	c.Debugf("Convert to JSON %s", b)
+	c.Debugf("Update the item in datastore %v", dst)
 
 	// Store item into datastore
 	_, err = datastore.Put(c, key, &dst)
