@@ -3,6 +3,7 @@ package aliza
 import (
 	"appengine"
 	"appengine/datastore"
+	"appengine/urlfetch"
 	"encoding/json"
 	"io/ioutil"
 	"log"
@@ -143,7 +144,7 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 	operation.Operation = "create"
 	operation.Notification_key_name = item.GcmGroupName
 	operation.Registration_ids = []string{pUser.RegistrationToken}
-	if gcmResponseCode = sendGroupOperationToGcm(&operation, c); r != http.StatusOK {
+	if gcmResponseCode = sendGroupOperationToGcm(&operation, c); gcmResponseCode != http.StatusOK {
 		c.Errorf("Send group operation to GCM failed")
 		r = gcmResponseCode
 		return
@@ -498,8 +499,8 @@ func updateOneItemInDatastore(c                appengine.Context,
 	}
 
 	// Vernon debug
-	c.Debugf("Got from user %v", src)
-	c.Debugf("Got from server %v", dst)
+	c.Debugf("Got from user %+v", src)
+	c.Debugf("Got from server %+v", dst)
 
 	// Modify attendant
 	dst.Attendant += src.Attendant
@@ -518,9 +519,7 @@ func updateOneItemInDatastore(c                appengine.Context,
 		// Append the new member
 		state = stateAppendMember
 		a = append(a, m)
-		notification.Message += fmt.Sprintf("User %s attends item %s and reaches %d/%d",
-			                                pRequestUserKey.Encode(),
-		                                    key.Encode(),
+		notification.Message += fmt.Sprintf("A new user attended and now item reaches %d/%d. ",
 		                                    dst.Attendant,
 		                                    dst.People)
 		// Vernon debug
@@ -529,39 +528,60 @@ func updateOneItemInDatastore(c                appengine.Context,
 		// Add attendant to the existing member
 		state = stateAddAttendant
 		a[i].Attendant += m.Attendant
-
+		notification.Message += fmt.Sprintf("Member attended %d more and now item reaches %d/%d. ",
+		                                    m.Attendant,
+		                                    dst.Attendant,
+		                                    dst.People)
 		// Vernon debug
-		c.Infof("Existing member %s attends %d more and reaches %d/%d", m.UserKey, m.Attendant, dst.Attendant, dst.People)
-		// TODO: Notify all members current attendant
+		c.Infof("Existing member %s attends %d more in item %s and reaches %d/%d", pRequestUser.InstanceId, m.Attendant, dst.GcmGroupName, dst.Attendant, dst.People)
 	}
 	if a[i].Attendant == 0 {
 		// The member leaves
 		if i == 0 {
 			// Delete item because its owner leaves
 			state = stateDeleteItem
-			// TODO: Notify all members that the items is closed
+			notification.Message += "Item is closed because its owner left. "
+			// Vernon debug
+			c.Infof("Item %s is closed because its owner %s leaves", dst.GcmGroupName, pRequestUser.InstanceId)
 		} else {
-			// Delete the user
-			state = stateDeleteMember
 			// Delete the member from the item
+			state = stateDeleteMember
 			a[i] = a[len(a)-1]
 			a[len(a)-1] = ItemMember{UserKey:"", Attendant:0}
 			a = a[:len(a)-1]
-			// TODO: Notify all members that a member leaves and current attendant
+			notification.Message += fmt.Sprintf("A member left and item is now %d/%d. ",
+		                                        dst.Attendant,
+		                                        dst.People)
+			// Vernon debug
+			c.Infof("User %s leaves item %s. Now %d/%d", pRequestUser.InstanceId, dst.GcmGroupName, dst.Attendant, dst.People)
 		}
 	} else if i == 0 {
 		// Only the owner can update other properties
+		// Flag indicates whether item properties are modified
+		var flagModified bool = false
 		if (src.Image != "") {
 			dst.Image = src.Image
+			flagModified = true
 		}
 		if (src.People != 0) {
 			dst.People = src.People
+			flagModified = true
 		}
-		// Set now as the creation time. Precision to a second.
-		dst.CreateTime = time.Unix(time.Now().Unix(), 0)
-		// Don't update Latitude and Longitude because owner can update anywhere away from the shop
+		if flagModified == true {
+			// Set now as the creation time. Precision to a second.
+			dst.CreateTime = time.Unix(time.Now().Unix(), 0)
+			// Don't update Latitude and Longitude because owner can update anywhere away from the shop
+			notification.Message += "Item information updated. "
+			// Vernon debug
+			c.Infof("Item %s information updated. ", dst.GcmGroupName)
+		}
+	}
 
-		// TODO: Notify all members that the properties were modified
+	// Check whether item is finished
+	if dst.Attendant == dst.People {
+		notification.Message += "Item is finished. Please get together! "
+		// Vernon debug
+		c.Infof("Item %s is finished. ", dst.GcmGroupName)
 	}
 
 	// Update Google Cloud Messaging group
@@ -597,6 +617,68 @@ func updateOneItemInDatastore(c                appengine.Context,
 	}
 
 	// Notify all members
+	notification.ItemId = key.Encode()
+	notification.RequestUserId = pRequestUserKey.Encode()
+	if gcmResponseCode = sendItemGcmMessage(c, &dst, &notification); gcmResponseCode != http.StatusOK {
+		c.Warningf("Send notification to all members failed")
+		r = gcmResponseCode
+		return
+	}
+	return
+}
+
+// Send a Google Cloud Messaging message to all the members in the item
+// Success: return 200 OK
+// Failure: return 500 Internal Server Error
+func sendItemGcmMessage(c appengine.Context, pItem *Item, pNotification *ItemUpdateNotification) (r int) {
+	// Initial variables
+	r = http.StatusOK
+
+	// Make GCM message body
+	var bodyString string = fmt.Sprintf(`
+		{
+			"to":"%s",
+			"data": {
+				"message":"%s",
+				"ItemId":"%s",
+				"RequestUserId":"%s"
+			}
+		}`, pItem.GcmGroupKey, pNotification.Message, pNotification.ItemId, pNotification.RequestUserId)
+
+	// Make a POST request for GCM
+	pReq, err := http.NewRequest("POST", GcmURL, strings.NewReader(bodyString))
+	if err != nil {
+		c.Errorf("%s in makeing a HTTP request", err)
+		r = http.StatusInternalServerError
+		return
+	}
+	pReq.Header.Add("Content-Type", "application/json")
+	pReq.Header.Add("Authorization", "key="+GcmApiKey)
+	// Debug
+	c.Infof("Send request to GCM server %s", *pReq)
+
+	// Send request
+	var client = urlfetch.Client(c)
+	resp, err := client.Do(pReq)
+	if err != nil {
+		c.Errorf("%s in sending request", err)
+		r = http.StatusInternalServerError
+		return
+	}
+	defer resp.Body.Close()
+
+	// Check response
+	c.Infof("%d %s", resp.StatusCode, resp.Status)
+
+	// Get response body
+	defer resp.Body.Close()
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		c.Errorf("%s in reading response body", err)
+		r = http.StatusInternalServerError
+		return
+	}
+	c.Infof("Body: %s", respBody)
 	return
 }
 
@@ -623,9 +705,9 @@ func updateItemGcmGroup(c appengine.Context, state UpdateItemState, pItem *Item,
 		operation.Notification_key_name = pItem.GcmGroupName
 		operation.Notification_key = pItem.GcmGroupKey
 		operation.Registration_ids = []string{pUser.RegistrationToken}
-	// case stateAddAttendant:
+	 case stateAddAttendant:
 		// Do nothing
-		// return
+		return
 	case stateDeleteMember:
 		// Vernon debug
 		c.Infof("Removing user %s from GCM group %s", pUser.InstanceId, pItem.GcmGroupName)

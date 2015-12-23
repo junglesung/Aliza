@@ -361,6 +361,9 @@ func sendGroupOperationToGcm(pOperation *GroupOperation, c appengine.Context) (r
 		return
 	}
 
+	// Vernon debug
+	c.Debugf("GCM operation %+v", pOperation)
+
 	// Make a POST request for GCM
 	var b []byte
 	b, err = json.Marshal(pOperation)
