@@ -503,7 +503,18 @@ func updateOneItemInDatastore(c                appengine.Context,
 	c.Debugf("Got from server %+v", dst)
 
 	// Modify attendant
-	dst.Attendant += src.Attendant
+	switch {
+	case dst.Attendant + src.Attendant > dst.People:
+		c.Warningf("Too many attendants. %d + %d > %d", dst.Attendant, src.Attendant, dst.People)
+		r = http.StatusBadRequest
+		return
+	case dst.Attendant + src.Attendant < 0:
+		c.Warningf("Too few attendants. %d%d < 0", dst.Attendant, src.Attendant)
+		r = http.StatusBadRequest
+		return
+	default:
+		dst.Attendant += src.Attendant
+	}
 
 	// Search whether the member exists
 	var i int
