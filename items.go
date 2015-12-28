@@ -462,12 +462,37 @@ func updateItem(rw http.ResponseWriter, req *http.Request) {
 	src.Members[0].UserKey = pKeyUser.Encode()
 	src.Members[0].Attendant = src.Attendant
 
-	// Update in a transaction
+	// Existing item got from datastore
+	var dst Item
+	var state UpdateItemState = stateLast
+	var notification ItemUpdateNotification
+	// Update datastore in a transaction
 	err = datastore.RunInTransaction(c, func(c appengine.Context) error {
 		var err1 error
-		r, err1 = updateOneItemInDatastore(c, key, &src, pUser, pKeyUser)
+		r, state, err1 = updateOneItemInDatastore(c, key, src, &dst, pUser, pKeyUser, &notification)
 		return err1
 	}, nil)
+	if r != http.StatusOK || err != nil {
+		c.Errorf("%s in updating item in datastore", err)
+		return
+	}
+
+	// Response code received from GCM server
+	var gcmResponseCode int
+
+	// Notify members through Google Cloud Messaging
+	notification.ItemId = keyString
+	notification.RequestUserId = pKeyUser.Encode()
+	if gcmResponseCode = sendItemGcmMessage(c, &dst, &notification); gcmResponseCode != http.StatusOK {
+		c.Warningf("Send notification to all members failed")
+		// Keep going even in failure because datastore has updated
+	}
+
+	// Update Google Cloud Messaging group
+	if gcmResponseCode = updateItemGcmGroup(c, state, &dst, pUser); gcmResponseCode != http.StatusOK {
+		c.Warningf("Update GCM group failed")
+		// Keep going even in failure because datastore has updated
+	}
 
 	// GOTO defer()
 	return
@@ -475,24 +500,20 @@ func updateItem(rw http.ResponseWriter, req *http.Request) {
 
 func updateOneItemInDatastore(c                appengine.Context,
                               key             *datastore.Key,
-                              src             *Item,
+                              src              Item,
+                              dst             *Item,
                               pRequestUser    *User,
-                              pRequestUserKey *datastore.Key) (r int, err error) {
-	// Existing item got from datastore
-	var dst Item
+                              pRequestUserKey *datastore.Key,
+                              pNotification   *ItemUpdateNotification) (r int, state UpdateItemState, err error) {
 	// Update state
-	var state UpdateItemState = stateLast
-	// Response code received from GCM server
-	var gcmResponseCode int
-	// Notification
-	var notification ItemUpdateNotification
+	state = stateLast
 
 	// Initial variables
 	r = http.StatusOK
 	err = nil
 
 	// Get the entity
-	if err = datastore.Get(c, key, &dst); err != nil {
+	if err = datastore.Get(c, key, dst); err != nil {
 		c.Errorf("%s in getting entity from datastore by key %s", err, key.Encode())
 		r = http.StatusNotFound
 		return
@@ -530,7 +551,7 @@ func updateOneItemInDatastore(c                appengine.Context,
 		// Append the new member
 		state = stateAppendMember
 		a = append(a, m)
-		notification.Message += fmt.Sprintf("A new user attended and now item reaches %d/%d. ",
+		pNotification.Message += fmt.Sprintf("A new user attended and now item reaches %d/%d. ",
 		                                    dst.Attendant,
 		                                    dst.People)
 		// Vernon debug
@@ -539,7 +560,7 @@ func updateOneItemInDatastore(c                appengine.Context,
 		// Add attendant to the existing member
 		state = stateAddAttendant
 		a[i].Attendant += m.Attendant
-		notification.Message += fmt.Sprintf("Member attended %d more and now item reaches %d/%d. ",
+		pNotification.Message += fmt.Sprintf("Member attended %d more and now item reaches %d/%d. ",
 		                                    m.Attendant,
 		                                    dst.Attendant,
 		                                    dst.People)
@@ -551,7 +572,7 @@ func updateOneItemInDatastore(c                appengine.Context,
 		if i == 0 {
 			// Delete item because its owner leaves
 			state = stateDeleteItem
-			notification.Message += "Item is closed because its owner left. "
+			pNotification.Message += "Item is closed because its owner left. "
 			// Vernon debug
 			c.Infof("Item %s is closed because its owner %s leaves", dst.GcmGroupName, pRequestUser.InstanceId)
 		} else {
@@ -560,7 +581,7 @@ func updateOneItemInDatastore(c                appengine.Context,
 			a[i] = a[len(a)-1]
 			a[len(a)-1] = ItemMember{UserKey:"", Attendant:0}
 			a = a[:len(a)-1]
-			notification.Message += fmt.Sprintf("A member left and item is now %d/%d. ",
+			pNotification.Message += fmt.Sprintf("A member left and item is now %d/%d. ",
 		                                        dst.Attendant,
 		                                        dst.People)
 			// Vernon debug
@@ -582,7 +603,7 @@ func updateOneItemInDatastore(c                appengine.Context,
 			// Set now as the creation time. Precision to a second.
 			dst.CreateTime = time.Unix(time.Now().Unix(), 0)
 			// Don't update Latitude and Longitude because owner can update anywhere away from the shop
-			notification.Message += "Item information updated. "
+			pNotification.Message += "Item information updated. "
 			// Vernon debug
 			c.Infof("Item %s information updated. ", dst.GcmGroupName)
 		}
@@ -590,15 +611,9 @@ func updateOneItemInDatastore(c                appengine.Context,
 
 	// Check whether item is finished
 	if dst.Attendant == dst.People {
-		notification.Message += "Item is finished. Please get together! "
+		pNotification.Message += "Item is finished. Please get together! "
 		// Vernon debug
 		c.Infof("Item %s is finished. ", dst.GcmGroupName)
-	}
-
-	// Update Google Cloud Messaging group
-	if gcmResponseCode = updateItemGcmGroup(c, state, &dst, pRequestUser); gcmResponseCode != http.StatusOK {
-		r = gcmResponseCode
-		return
 	}
 
 	// Modify item in datastore
@@ -618,7 +633,7 @@ func updateOneItemInDatastore(c                appengine.Context,
 		c.Debugf("Item %s is going to be modified in datastore", key.Encode())
 
 		// Update item in datastore
-		_, err = datastore.Put(c, key, &dst)
+		_, err = datastore.Put(c, key, dst)
 		if err != nil {
 			c.Errorf("%s in storing in datastore with key %s", err, key.Encode())
 			r = http.StatusInternalServerError
@@ -627,14 +642,6 @@ func updateOneItemInDatastore(c                appengine.Context,
 		c.Infof("Datastore item is updated %v", dst)
 	}
 
-	// Notify all members
-	notification.ItemId = key.Encode()
-	notification.RequestUserId = pRequestUserKey.Encode()
-	if gcmResponseCode = sendItemGcmMessage(c, &dst, &notification); gcmResponseCode != http.StatusOK {
-		c.Warningf("Send notification to all members failed")
-		r = gcmResponseCode
-		return
-	}
 	return
 }
 
