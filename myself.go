@@ -121,18 +121,17 @@ func UpdateMyself(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 		c.Infof("Add user %+v", user)
-	} else if user.RegistrationToken == pOldUser.RegistrationToken {
-		// Duplicate request. Do nothing to datastore and return existing key
-		cKey = pKey
 	} else {
-		// Check registration token is official-signed by sending the token to Google token authenticity check service
-		if isRegistrationTokenValid(user.RegistrationToken, c) == false {
-			c.Errorf("Google says %s is not a valid token", user.RegistrationToken)
-			r = 1
-			return
+		// Update token if the new one is different from the old one. Otherwise update the time user updates
+		if user.RegistrationToken != pOldUser.RegistrationToken {
+			// Check registration token is official-signed by sending the token to Google token authenticity check service
+			if isRegistrationTokenValid(user.RegistrationToken, c) == false {
+				c.Errorf("Google says %s is not a valid token", user.RegistrationToken)
+				r = 1
+				return
+			}
 		}
-
-		// Update user token in datastore
+		// Update datastore
 		cKey, err = datastore.Put(c, pKey, &user)
 		if err != nil {
 			c.Errorf("%s in storing to datastore", err)

@@ -403,7 +403,7 @@ func sendGroupOperationToGcm(pOperation *GroupOperation, c appengine.Context) (r
 		r = http.StatusInternalServerError
 		return
 	}
-	c.Infof("%s", b)
+	c.Infof("Receive body %s", b)
 	if err = json.Unmarshal(b, &respBody); err != nil {
 		c.Errorf("%s in decoding JSON response body", err)
 		r = http.StatusInternalServerError
