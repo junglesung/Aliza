@@ -477,6 +477,11 @@ func updateItem(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Indicate that the item is deleted
+	if state == stateDeleteItem {
+		r = http.StatusNotFound
+	}
+
 	// Response code received from GCM server
 	var gcmResponseCode int
 
