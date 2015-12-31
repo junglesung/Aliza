@@ -17,6 +17,8 @@ import (
 type ItemMember struct {
 	UserKey      string     `json:"userkey"`
 	Attendant    int        `json:"attendant"`
+	PhoneNumber  string     `json:"phonenumber"`
+	SkypeId      string     `json:"skypeid"`
 }
 
 type Item struct {
@@ -114,6 +116,26 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 		r = http.StatusBadRequest
 		return
 	}
+	if item.Members == nil || len(item.Members) != 1 {
+		c.Errorf("Owner is not set")
+		r = http.StatusBadRequest
+		return
+	}
+	if item.Members[0].Attendant <= 0 {
+		c.Errorf("Attendant %d <= 0", item.Members[0].Attendant)
+		r = http.StatusBadRequest
+		return
+	}
+	if item.Members[0].Attendant != item.Attendant {
+		c.Errorf("Confused attendant %d and owner's attendant", item.Attendant, item.Members[0].Attendant)
+		r = http.StatusBadRequest
+		return
+	}
+	if item.Members[0].PhoneNumber == "" || item.Members[0].SkypeId == "" {
+		c.Errorf("Phone number %s or Skype ID %s is not given", item.Members[0].PhoneNumber, item.Members[0].SkypeId)
+		r = http.StatusBadRequest
+		return
+	}
 
 	// Set the first member as owner to the user key
 	var pUser    *User
@@ -124,9 +146,7 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 		r = http.StatusInternalServerError
 		return
 	}
-	item.Members = make([]ItemMember, 1)
 	item.Members[0].UserKey = pUserKey.Encode()
-	item.Members[0].Attendant = item.Attendant
 
 	// Set now as the creation time. Precision to a second.
 	item.CreateTime = time.Unix(time.Now().Unix(), 0)
