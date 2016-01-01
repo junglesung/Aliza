@@ -17,8 +17,8 @@ import (
 type ItemMember struct {
 	UserKey      string     `json:"userkey"`
 	Attendant    int        `json:"attendant"`
-	PhoneNumber  string     `json:"phonenumber"`
-	SkypeId      string     `json:"skypeid"`
+	PhoneNumber  string     `json:"phonenumber,omitempty"`
+	SkypeId      string     `json:"skypeid,omitempty"`
 }
 
 type Item struct {
@@ -131,7 +131,7 @@ func storeItem(rw http.ResponseWriter, req *http.Request) {
 		r = http.StatusBadRequest
 		return
 	}
-	if item.Members[0].PhoneNumber == "" || item.Members[0].SkypeId == "" {
+	if item.Members[0].PhoneNumber == "" && item.Members[0].SkypeId == "" {
 		c.Errorf("Phone number %s or Skype ID %s is not given", item.Members[0].PhoneNumber, item.Members[0].SkypeId)
 		r = http.StatusBadRequest
 		return
