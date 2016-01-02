@@ -683,8 +683,8 @@ func sendItemGcmMessage(c appengine.Context, pItem *Item, pNotification *ItemUpd
 			"to":"%s",
 			"data": {
 				"message":"%s",
-				"ItemId":"%s",
-				"RequestUserId":"%s"
+				"itemid":"%s",
+				"requestuserid":"%s"
 			}
 		}`, pItem.GcmGroupKey, pNotification.Message, pNotification.ItemId, pNotification.RequestUserId)
 
