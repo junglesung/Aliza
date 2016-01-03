@@ -478,9 +478,11 @@ func updateItem(rw http.ResponseWriter, req *http.Request) {
 		r = http.StatusInternalServerError
 		return
 	}
-	src.Members = make([]ItemMember, 1)
+	if src.Members == nil || len(src.Members) == 0 {
+		src.Members = make([]ItemMember, 1)
+	}
 	src.Members[0].UserKey = pKeyUser.Encode()
-	src.Members[0].Attendant = src.Attendant
+	src.Attendant = src.Members[0].Attendant
 
 	// Existing item got from datastore
 	var dst Item
