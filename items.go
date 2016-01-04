@@ -574,6 +574,7 @@ func updateOneItemInDatastore(c                appengine.Context,
 			break;
 		}
 	}
+
 	if i == len(a) {
 		// Append the new member
 		state = stateAppendMember
@@ -635,11 +636,12 @@ func updateOneItemInDatastore(c                appengine.Context,
 			c.Infof("Item %s information updated. ", dst.GcmGroupName)
 		}
 	}
+	// Appending and removing a member will make a point to another memory. So assign back.
+	dst.Members = a
 
 	// Check whether item is finished
 	if dst.Attendant == dst.People {
 		pNotification.Message += "Item is finished. Please get together! "
-		// Vernon debug
 		c.Infof("Item %s is finished. ", dst.GcmGroupName)
 	}
 
@@ -666,7 +668,7 @@ func updateOneItemInDatastore(c                appengine.Context,
 			r = http.StatusInternalServerError
 			return
 		}
-		c.Infof("Datastore item is updated %v", dst)
+		c.Infof("Datastore item is updated %+v", dst)
 	}
 
 	return
