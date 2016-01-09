@@ -24,6 +24,7 @@ type ItemMember struct {
 type Item struct {
 	Id             string     `json:"id"          datastore:"-"`
 	Image          string     `json:"image"`
+	Thumbnail      string     `json:"thumbnail"`
 	People         int        `json:"people"`
 	Attendant      int        `json:"attendant"`
 	Latitude       float64    `json:"latitude"`
@@ -575,6 +576,13 @@ func updateOneItemInDatastore(c                appengine.Context,
 		}
 	}
 
+	if i == len(a) && m.Attendant <= 0 {
+		// Non-existing has no attendant to decrease
+		c.Warningf("Duplicate leave. Ignore.")
+		r = http.StatusBadRequest
+		return
+	}
+	
 	if i == len(a) {
 		// Append the new member
 		state = stateAppendMember
@@ -621,6 +629,10 @@ func updateOneItemInDatastore(c                appengine.Context,
 		var flagModified bool = false
 		if (src.Image != "") {
 			dst.Image = src.Image
+			flagModified = true
+		}
+		if (src.Thumbnail != "") {
+			dst.Thumbnail = src.Thumbnail
 			flagModified = true
 		}
 		if (src.People != 0) {

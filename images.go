@@ -4,7 +4,6 @@ import (
 	"appengine"
 	"bytes"
 	"image"
-	"io"
 	"io/ioutil"
 	"net/http"
 
@@ -40,7 +39,6 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 	var b []byte
 	// Google Cloud Storage file writer
 	var wc *storage.Writer = nil
-	var wct *storage.Writer = nil
 	// Error
 	var err error = nil
 	// Result, 0: success, 1: failed
@@ -116,43 +114,12 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Store file in Google Cloud Storage
-	wc = storage.NewWriter(ctx, bucket, fileName)
-	wc.ContentType = contentType
-	wct = storage.NewWriter(ctx, bucket, fileNameThumbnail)
-	wct.ContentType = contentType
-	// wc.Metadata = map[string]string{
-	// 	"x-goog-meta-foo": "foo",
-	// 	"x-goog-meta-bar": "bar",
-	// }
-	if err = processAndSaveJpeg(c, bytes.NewReader(b), wc, wct); err != nil {
-		c.Errorf("Process image and save to GCS failed")
-		r = 1
-		return
-	}
-	if err = wc.Close(); err != nil {
-		c.Errorf("CreateFile: unable to close bucket %q, file %q: %v", bucket, fileName, err)
-		r = 1
-		return
-	}
-	if err = wct.Close(); err != nil {
-		c.Errorf("CreateFileThumbnail: unable to close bucket %q, file %q: %v", bucket, fileNameThumbnail, err)
-		r = 1
-		return
-	}
-	c.Infof("/%v/%v, /%v/%v created", bucket, fileName, bucket, fileNameThumbnail)
-}
-
-// Rotate a JPEG image according to its EXIF orientation
-// Also create an image thumbnail
-// Save to 2 files
-func processAndSaveJpeg(c appengine.Context, in *bytes.Reader, outRotated io.Writer, outThumbnail io.Writer) (err error) {
+	// Store rotated image in Google Cloud Storage
+	var in *bytes.Reader = bytes.NewReader(b)
 	var x *exif.Exif = nil
 	var orientation *tiff.Tag = nil
-	var openImage image.Image
-	var rotateImage *image.NRGBA = nil
-	var smallImage *image.NRGBA = nil
-	err = nil
+	var beforeImage image.Image
+	var afterImage *image.NRGBA = nil
 
 	// Read EXIF
 	if _, err = in.Seek(0, 0); err != nil {
@@ -176,51 +143,63 @@ func processAndSaveJpeg(c appengine.Context, in *bytes.Reader, outRotated io.Wri
 		c.Errorf("%s in moving the reader offset to the beginning in order to read EXIF", err)
 		return
 	}
-	if openImage, err = imaging.Decode(in); err != nil {
+	if beforeImage, err = imaging.Decode(in); err != nil {
 		c.Errorf("%s in opening image %s", err)
 		return
 	}
 
 	switch orientation.String() {
 	case "1":
-	// Do nothing
+		afterImage = beforeImage.(*image.NRGBA)
 	case "2":
-		rotateImage = imaging.FlipH(openImage)
+		afterImage = imaging.FlipH(beforeImage)
 	case "3":
-		rotateImage = imaging.Rotate180(openImage)
+		afterImage = imaging.Rotate180(beforeImage)
 	case "4":
-		rotateImage = imaging.FlipV(openImage)
+		afterImage = imaging.FlipV(beforeImage)
 	case "5":
-		rotateImage = imaging.Transverse(openImage)
+		afterImage = imaging.Transverse(beforeImage)
 	case "6":
-		rotateImage = imaging.Rotate270(openImage)
+		afterImage = imaging.Rotate270(beforeImage)
 	case "7":
-		rotateImage = imaging.Transpose(openImage)
+		afterImage = imaging.Transpose(beforeImage)
 	case "8":
-		rotateImage = imaging.Rotate90(openImage)
+		afterImage = imaging.Rotate90(beforeImage)
 	}
 
-	// Small
-	if rotateImage.Rect.Dx() > rotateImage.Rect.Dy() {
-		smallImage = imaging.Resize(rotateImage, 1920, 0, imaging.Lanczos)
+	// Save rotated image
+	wc = storage.NewWriter(ctx, bucket, fileName)
+	wc.ContentType = contentType
+	if err = imaging.Encode(wc, afterImage, imaging.JPEG); err != nil {
+		c.Errorf("%s in saving rotated image", err)
+		return
+	}
+	if err = wc.Close(); err != nil {
+		c.Errorf("CreateFile: unable to close bucket %q, file %q: %v", bucket, fileName, err)
+		r = 1
+		return
+	}
+	wc = nil
+
+	// Make thumbnail
+	if afterImage.Rect.Dx() > afterImage.Rect.Dy() {
+		afterImage = imaging.Resize(afterImage, 1920, 0, imaging.Lanczos)
 	} else {
-		smallImage = imaging.Resize(rotateImage, 0, 1920, imaging.Lanczos)
+		afterImage = imaging.Resize(afterImage, 0, 1920, imaging.Lanczos)
 	}
 
-	// Save
-	if outRotated != nil {
-		if err = imaging.Encode(outRotated, rotateImage, imaging.JPEG); err != nil {
-			c.Errorf("%s in saving rotated image", err)
-			return
-		}
+	// Save thumbnail
+	wc = storage.NewWriter(ctx, bucket, fileNameThumbnail)
+	wc.ContentType = contentType
+	if imaging.Encode(wc, afterImage, imaging.JPEG); err != nil {
+		c.Errorf("%s in saving image thumbnail", err)
+		return
 	}
-	if outThumbnail != nil {
-		if imaging.Encode(outThumbnail, smallImage, imaging.JPEG); err != nil {
-			c.Errorf("%s in saving image thumbnail", err)
-			return
-		}
+	if err = wc.Close(); err != nil {
+		c.Errorf("CreateFileThumbnail: unable to close bucket %q, file %q: %v", bucket, fileNameThumbnail, err)
+		r = 1
+		return
 	}
 
-	return
+	c.Infof("/%v/%v, /%v/%v created", bucket, fileName, bucket, fileNameThumbnail)
 }
-
