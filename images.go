@@ -13,12 +13,8 @@ import (
 	"github.com/disintegration/imaging"
 
 	gcscontext   "golang.org/x/net/context"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
 	gcsappengine "google.golang.org/appengine"
 	gcsfile      "google.golang.org/appengine/file"
-	gcsurlfetch  "google.golang.org/appengine/urlfetch"
-	"google.golang.org/cloud"
 	"google.golang.org/cloud/storage"
 )
 
@@ -28,7 +24,11 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 	// Google Cloud Storage authentication
 	var cc gcscontext.Context
 	// Google Cloud Storage bucket name
-	var bucket string = ""
+	var bucketName string = ""
+	// Google Cloud Storage client
+	var client *storage.Client
+	// Google Cloud Storage bucket
+	var bucketHandle *storage.BucketHandle
 	// User uploaded image file name
 	var fileName string = uuid.New()
 	// Transform user uploaded image to a thumbnail file name
@@ -42,19 +42,19 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 	// Error
 	var err error = nil
 	// Result, 0: success, 1: failed
-	var r int = 0
+	var r int = http.StatusCreated
 
 	// Set response in the end
 	defer func() {
 		// Return status. WriteHeader() must be called before call to Write
-		if r == 0 {
+		if r == http.StatusCreated {
 			// Changing the header after a call to WriteHeader (or Write) has no effect.
 			// rw.Header().Set("Location", req.URL.String()+"/"+cKey.Encode())
-			rw.Header().Set("Location", "http://"+bucket+".storage.googleapis.com/"+fileName)
-			rw.Header().Set("X-Thumbnail", "http://"+bucket+".storage.googleapis.com/"+ fileNameThumbnail)
-			rw.WriteHeader(http.StatusCreated)
+			rw.Header().Set("Location", "http://"+ bucketName +".storage.googleapis.com/"+fileName)
+			rw.Header().Set("X-Thumbnail", "http://"+ bucketName +".storage.googleapis.com/"+ fileNameThumbnail)
+			rw.WriteHeader(r)
 		} else {
-			http.Error(rw, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+			http.Error(rw, http.StatusText(r), r)
 		}
 	}()
 
@@ -65,7 +65,7 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 	b, err = ioutil.ReadAll(req.Body)
 	if err != nil {
 		c.Errorf("%s in reading body", err)
-		r = 1
+		r = http.StatusInternalServerError
 		return
 	}
 	c.Infof("Body length %d bytes, read %d bytes", req.ContentLength, len(b))
@@ -78,39 +78,34 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 		fileNameThumbnail += ".jpg"
 	default:
 		c.Errorf("Unknown or unsupported content type '%s'. Valid: image/jpeg", contentType)
-		r = 1
+		r = http.StatusBadRequest
 		return
 	}
 	c.Infof("Content type %s is received, %s is detected.", contentType, http.DetectContentType(b))
 
-	// Get default bucket name
+	// Prepare Google Cloud Storage authentication
 	cc = gcsappengine.NewContext(req)
-	if bucket, err = gcsfile.DefaultBucketName(cc); err != nil {
-		c.Errorf("%s in getting default GCS bucket name", err)
-		r = 1
+	if client, err = storage.NewClient(cc); err != nil {
+		c.Errorf("%s in initializing a GCS client", err)
+		r = http.StatusInternalServerError
 		return
 	}
-	c.Infof("APP Engine Version: %s", gcsappengine.VersionID(cc))
-	c.Infof("Using bucket name: %s", bucket)
+	defer client.Close()
 
-	// Prepare Google Cloud Storage authentication
-	hc := &http.Client{
-		Transport: &oauth2.Transport{
-			Source: google.AppEngineTokenSource(cc, storage.ScopeFullControl),
-			// Note that the App Engine urlfetch service has a limit of 10MB uploads and
-			// 32MB downloads.
-			// See https://cloud.google.com/appengine/docs/go/urlfetch/#Go_Quotas_and_limits
-			// for more information.
-			Base: &gcsurlfetch.Transport{Context: cc},
-		},
+	// Get default bucket
+	if bucketName, err = gcsfile.DefaultBucketName(cc); err != nil {
+		c.Errorf("%s in getting default GCS bucket name", err)
+		r = http.StatusInternalServerError
+		return
 	}
-	ctx := cloud.NewContext(gcsappengine.AppID(cc), hc)
+	bucketHandle = client.Bucket(bucketName)
+	c.Infof("APP Engine Version: %s", gcsappengine.VersionID(cc))
+	c.Infof("Using bucket name: %s", bucketName)
 
 	// Change default object ACLs
-	err = storage.PutDefaultACLRule(ctx, bucket, "allUsers", storage.RoleReader)
-	// err = storage.PutACLRule(ctx, bucket, fileName, "allUsers", storage.RoleReader)
-	if err != nil {
-		c.Errorf("%v in saving ACL rule for bucket %q", err, bucket)
+	if err = bucketHandle.DefaultObjectACL().Set(cc, storage.AllUsers, storage.RoleReader); err != nil {
+		c.Errorf("%v in saving default object ACL rule for bucket %q", err, bucketName)
+		r = http.StatusInternalServerError
 		return
 	}
 
@@ -168,14 +163,14 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Save rotated image
-	wc = storage.NewWriter(ctx, bucket, fileName)
+	wc = bucketHandle.Object(fileName).NewWriter(cc)
 	wc.ContentType = contentType
 	if err = imaging.Encode(wc, afterImage, imaging.JPEG); err != nil {
 		c.Errorf("%s in saving rotated image", err)
 		return
 	}
 	if err = wc.Close(); err != nil {
-		c.Errorf("CreateFile: unable to close bucket %q, file %q: %v", bucket, fileName, err)
+		c.Errorf("CreateFile: unable to close bucket %q, file %q: %v", bucketName, fileName, err)
 		r = 1
 		return
 	}
@@ -189,17 +184,17 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Save thumbnail
-	wc = storage.NewWriter(ctx, bucket, fileNameThumbnail)
+	wc = bucketHandle.Object(fileNameThumbnail).NewWriter(cc)
 	wc.ContentType = contentType
 	if imaging.Encode(wc, afterImage, imaging.JPEG); err != nil {
 		c.Errorf("%s in saving image thumbnail", err)
 		return
 	}
 	if err = wc.Close(); err != nil {
-		c.Errorf("CreateFileThumbnail: unable to close bucket %q, file %q: %v", bucket, fileNameThumbnail, err)
+		c.Errorf("CreateFileThumbnail: unable to close bucket %q, file %q: %v", bucketName, fileNameThumbnail, err)
 		r = 1
 		return
 	}
 
-	c.Infof("/%v/%v, /%v/%v created", bucket, fileName, bucket, fileNameThumbnail)
+	c.Infof("/%v/%v, /%v/%v created", bucketName, fileName, bucketName, fileNameThumbnail)
 }
