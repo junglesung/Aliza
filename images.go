@@ -2,10 +2,17 @@ package aliza
 
 import (
 	"appengine"
+	"bytes"
+	"image"
+	"io"
 	"io/ioutil"
 	"net/http"
 
 	"github.com/pborman/uuid"
+	"github.com/rwcarlsen/goexif/exif"
+	"github.com/rwcarlsen/goexif/tiff"
+	"github.com/disintegration/imaging"
+
 	gcscontext   "golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -25,10 +32,17 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 	var bucket string = ""
 	// User uploaded image file name
 	var fileName string = uuid.New()
+	// Transform user uploaded image to a thumbnail file name
+	var fileNameThumbnail string = uuid.New()
 	// User uploaded image file type
 	var contentType string = ""
 	// User uploaded image file raw data
 	var b []byte
+	// Google Cloud Storage file writer
+	var wc *storage.Writer = nil
+	var wct *storage.Writer = nil
+	// Error
+	var err error = nil
 	// Result, 0: success, 1: failed
 	var r int = 0
 
@@ -39,6 +53,7 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 			// Changing the header after a call to WriteHeader (or Write) has no effect.
 			// rw.Header().Set("Location", req.URL.String()+"/"+cKey.Encode())
 			rw.Header().Set("Location", "http://"+bucket+".storage.googleapis.com/"+fileName)
+			rw.Header().Set("X-Thumbnail", "http://"+bucket+".storage.googleapis.com/"+ fileNameThumbnail)
 			rw.WriteHeader(http.StatusCreated)
 		} else {
 			http.Error(rw, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
@@ -49,7 +64,7 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 	c = appengine.NewContext(req)
 
 	// Get data from body
-	b, err := ioutil.ReadAll(req.Body)
+	b, err = ioutil.ReadAll(req.Body)
 	if err != nil {
 		c.Errorf("%s in reading body", err)
 		r = 1
@@ -62,6 +77,7 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 	switch contentType {
 	case "image/jpeg":
 		fileName += ".jpg"
+		fileNameThumbnail += ".jpg"
 	default:
 		c.Errorf("Unknown or unsupported content type '%s'. Valid: image/jpeg", contentType)
 		r = 1
@@ -101,22 +117,110 @@ func storeImage(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	// Store file in Google Cloud Storage
-	wc := storage.NewWriter(ctx, bucket, fileName)
+	wc = storage.NewWriter(ctx, bucket, fileName)
 	wc.ContentType = contentType
+	wct = storage.NewWriter(ctx, bucket, fileNameThumbnail)
+	wct.ContentType = contentType
 	// wc.Metadata = map[string]string{
 	// 	"x-goog-meta-foo": "foo",
 	// 	"x-goog-meta-bar": "bar",
 	// }
-	if _, err := wc.Write(b); err != nil {
-		c.Errorf("CreateFile: unable to write data to bucket %q, file %q: %v", bucket, fileName, err)
+	if err = processAndSaveJpeg(c, bytes.NewReader(b), wc, wct); err != nil {
+		c.Errorf("Process image and save to GCS failed")
 		r = 1
 		return
 	}
-	if err := wc.Close(); err != nil {
+	if err = wc.Close(); err != nil {
 		c.Errorf("CreateFile: unable to close bucket %q, file %q: %v", bucket, fileName, err)
 		r = 1
 		return
 	}
-	c.Infof("/%v/%v\n created", bucket, fileName)
+	if err = wct.Close(); err != nil {
+		c.Errorf("CreateFileThumbnail: unable to close bucket %q, file %q: %v", bucket, fileNameThumbnail, err)
+		r = 1
+		return
+	}
+	c.Infof("/%v/%v, /%v/%v created", bucket, fileName, bucket, fileNameThumbnail)
+}
+
+// Rotate a JPEG image according to its EXIF orientation
+// Also create an image thumbnail
+// Save to 2 files
+func processAndSaveJpeg(c appengine.Context, in *bytes.Reader, outRotated io.Writer, outThumbnail io.Writer) (err error) {
+	var x *exif.Exif = nil
+	var orientation *tiff.Tag = nil
+	var openImage image.Image
+	var rotateImage *image.NRGBA = nil
+	var smallImage *image.NRGBA = nil
+	err = nil
+
+	// Read EXIF
+	if _, err = in.Seek(0, 0); err != nil {
+		c.Errorf("%s in moving the reader offset to the beginning in order to read EXIF", err)
+		return
+	}
+	if x, err = exif.Decode(in); err != nil {
+		c.Errorf("%s in decoding JPEG image", err)
+		return
+	}
+
+	// Get Orientation
+	if orientation, err = x.Get(exif.Orientation); err != nil {
+		c.Warningf("%s in getting orientation from EXIF", err)
+		return
+	}
+	c.Debugf("Orientation %s", orientation.String())
+
+	// Open image
+	if _, err = in.Seek(0, 0); err != nil {
+		c.Errorf("%s in moving the reader offset to the beginning in order to read EXIF", err)
+		return
+	}
+	if openImage, err = imaging.Decode(in); err != nil {
+		c.Errorf("%s in opening image %s", err)
+		return
+	}
+
+	switch orientation.String() {
+	case "1":
+	// Do nothing
+	case "2":
+		rotateImage = imaging.FlipH(openImage)
+	case "3":
+		rotateImage = imaging.Rotate180(openImage)
+	case "4":
+		rotateImage = imaging.FlipV(openImage)
+	case "5":
+		rotateImage = imaging.Transverse(openImage)
+	case "6":
+		rotateImage = imaging.Rotate270(openImage)
+	case "7":
+		rotateImage = imaging.Transpose(openImage)
+	case "8":
+		rotateImage = imaging.Rotate90(openImage)
+	}
+
+	// Small
+	if rotateImage.Rect.Dx() > rotateImage.Rect.Dy() {
+		smallImage = imaging.Resize(rotateImage, 1920, 0, imaging.Lanczos)
+	} else {
+		smallImage = imaging.Resize(rotateImage, 0, 1920, imaging.Lanczos)
+	}
+
+	// Save
+	if outRotated != nil {
+		if err = imaging.Encode(outRotated, rotateImage, imaging.JPEG); err != nil {
+			c.Errorf("%s in saving rotated image", err)
+			return
+		}
+	}
+	if outThumbnail != nil {
+		if imaging.Encode(outThumbnail, smallImage, imaging.JPEG); err != nil {
+			c.Errorf("%s in saving image thumbnail", err)
+			return
+		}
+	}
+
+	return
 }
 
