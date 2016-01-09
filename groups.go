@@ -378,6 +378,7 @@ func sendGroupOperationToGcm(pOperation *GroupOperation, c appengine.Context) (r
 		r = http.StatusInternalServerError
 		return
 	}
+	defer pReq.Body.Close()
 	pReq.Header.Add("Content-Type", "application/json")
 	pReq.Header.Add("Authorization", "key="+GcmApiKey)
 	pReq.Header.Add("project_id", GaeProjectNumber)
@@ -393,10 +394,10 @@ func sendGroupOperationToGcm(pOperation *GroupOperation, c appengine.Context) (r
 		r = http.StatusInternalServerError
 		return
 	}
+	defer resp.Body.Close()
 
 	// Get response body
 	var respBody GroupOperationResponse
-	defer resp.Body.Close()
 	b, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
 		c.Errorf("%s in reading response body", err)

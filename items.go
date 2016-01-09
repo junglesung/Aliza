@@ -711,6 +711,7 @@ func sendItemGcmMessage(c appengine.Context, pItem *Item, pNotification *ItemUpd
 		r = http.StatusInternalServerError
 		return
 	}
+	defer pReq.Body.Close()
 	pReq.Header.Add("Content-Type", "application/json")
 	pReq.Header.Add("Authorization", "key="+GcmApiKey)
 	// Debug
@@ -730,7 +731,6 @@ func sendItemGcmMessage(c appengine.Context, pItem *Item, pNotification *ItemUpd
 	c.Infof("%d %s", resp.StatusCode, resp.Status)
 
 	// Get response body
-	defer resp.Body.Close()
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		c.Errorf("%s in reading response body", err)

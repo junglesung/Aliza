@@ -133,6 +133,7 @@ func SendUserMessage(rw http.ResponseWriter, req *http.Request) {
 		r = http.StatusInternalServerError
 		return
 	}
+	defer pReq.Body.Close()
 	pReq.Header.Add("Content-Type", "application/json")
 	pReq.Header.Add("Authorization", "key="+GcmApiKey)
 	// Debug
@@ -152,7 +153,6 @@ func SendUserMessage(rw http.ResponseWriter, req *http.Request) {
 	c.Infof("%d %s", resp.StatusCode, resp.Status)
 
 	// Get response body
-	defer resp.Body.Close()
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		c.Errorf("%s in reading response body", err)
@@ -238,6 +238,7 @@ func SendTopicMessage(rw http.ResponseWriter, req *http.Request) {
 		r = http.StatusInternalServerError
 		return
 	}
+	defer pReq.Body.Close()
 	pReq.Header.Add("Content-Type", "application/json")
 	pReq.Header.Add("Authorization", "key="+GcmApiKey)
 	// Debug
@@ -257,7 +258,6 @@ func SendTopicMessage(rw http.ResponseWriter, req *http.Request) {
 	c.Infof("%d %s", resp.StatusCode, resp.Status)
 
 	// Get response body
-	defer resp.Body.Close()
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		c.Errorf("%s in reading response body", err)
@@ -358,6 +358,7 @@ func SendGroupMessage(rw http.ResponseWriter, req *http.Request) {
 		r = http.StatusInternalServerError
 		return
 	}
+	defer pReq.Body.Close()
 	pReq.Header.Add("Content-Type", "application/json")
 	pReq.Header.Add("Authorization", "key="+GcmApiKey)
 	// Debug
@@ -377,7 +378,6 @@ func SendGroupMessage(rw http.ResponseWriter, req *http.Request) {
 	c.Infof("%d %s", resp.StatusCode, resp.Status)
 
 	// Get response body
-	defer resp.Body.Close()
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		c.Errorf("%s in reading response body", err)

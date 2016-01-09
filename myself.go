@@ -169,13 +169,18 @@ func isRegistrationTokenValid(token string, c appengine.Context) (isValid bool) 
 		// Retry while server is temporary invalid
 		if err != nil {
 			c.Errorf("%s in verifying instance ID %s", err, token)
-		} else if resp.StatusCode != http.StatusServiceUnavailable {
-			break
+		} else {
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				break
+			} else {
+				resp.Body.Close()
+			}
 		}
 
 		c.Warningf("Server is temporary unavailable. Wait 1 secs for retry...")
 		time.Sleep(1 * time.Second)
 	}
+	defer resp.Body.Close()
 
 	// Check response code
 	if resp.StatusCode != http.StatusOK {
@@ -184,7 +189,6 @@ func isRegistrationTokenValid(token string, c appengine.Context) (isValid bool) 
 	}
 
 	// Get body
-	defer resp.Body.Close()
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		c.Errorf("%s in reading HTTP response body")
